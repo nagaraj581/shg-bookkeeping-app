@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "default": "shg-bookkeeping-app",
+    "shg-bookkeeping-app": "shg-bookkeeping-app",
+    "main": "shg-bookkeeping-app"
+  },
+  "targets": {},
+  "etags": {}
+}

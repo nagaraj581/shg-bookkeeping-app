@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: keep these small tweaks for better font & smoothness */
+body {
+  @apply font-sans text-gray-900 bg-gray-100 dark:bg-gray-900 dark:text-gray-100;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Code block styling (optional, for debug output) */
+code {
+  @apply font-mono text-blue-700;
+}

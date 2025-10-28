@@ -1,0 +1,2282 @@
+import * as XLSX from 'xlsx';
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import MembersScreen from "./components/Members/MembersScreen";
+import MemberFormModal from "./components/Members/MemberFormModal";
+import BookkeepingScreen from "./components/Bookkeeping/BookkeepingScreen";
+import { 
+  initializeApp 
+} from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged, 
+  signOut, 
+  signInWithCustomToken,
+  GoogleAuthProvider, 
+  signInWithPopup,    
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  addDoc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  serverTimestamp 
+} from 'firebase/firestore';
+
+// Define Firebase context
+const FirebaseContext = createContext(null);
+const AuthContext = createContext(null);
+
+// ============================================================================
+// IMPORTANT: This firebaseConfig WILL BE USED when deployed to Firebase Hosting
+// or when __firebase_config is not available.
+// When running in Canvas PREVIEW, the injected __firebase_config will be preferred.
+// ============================================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDVKhGOfMw7eVg6hGszAGhadmxlHbzBVnk",
+  authDomain: "shg-bookkeeping-app.firebaseapp.com",
+  projectId: "shg-bookkeeping-app",
+  storageBucket: "shg-bookkeeping-app.firebasestorage.app",
+  messagingSenderId: "119893719501",
+  appId: "1:119893719501:web:a86cf7470bedc302466c84",
+  measurementId: "G-2FXB7ZPRXP"
+};
+const app = initializeApp(firebaseConfig);
+// ============================================================================
+// END OF FALLBACK FIREBASE CONFIGURATION SECTION
+// ============================================================================
+
+
+const App = () => {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [members, setMembers] = useState([]);
+  const [shgName, setShgName] = useState('');
+  const [shgId, setShgId] = useState('');
+  const [shgLogoUrl, setShgLogoUrl] = useState('');
+  const [showMemberModal, setShowMemberModal] = useState(false);
+  const [editingMember, setEditingMember] = useState(null);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberMobile, setNewMemberMobile] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberJoiningDate, setNewMemberJoiningDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newMemberDesignation, setNewMemberDesignation] = useState('member');
+  const [showAlert, setShowAlert] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [alertCopyContent, setAlertCopyContent] = useState(null);
+  const [showLoginScreen, setShowLoginScreen] = useState(false); 
+
+
+  // Bookkeeping states
+  const [transactions, setTransactions] = useState([]);
+  const [selectedMemberId, setSelectedMemberId] = useState('');
+  const [savingAmount, setSavingAmount] = useState('');
+  const [savingDate, setSavingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [savingType, setSavingType] = useState('Monthly Saving');
+
+  // Loan states
+  const [loans, setLoans] = useState([]);
+  const [loanMemberId, setLoanMemberId] = useState('');
+  const [loanAmount, setLoanAmount] = useState('');
+  const [loanInterestRate, setLoanInterestRate] = useState('');
+  const [loanTermMonths, setLoanTermMonths] = useState('');
+  const [loanDate, setLoanDate] = useState(new Date().toISOString().split('T')[0]);
+  const [loanDescription, setLoanDescription] = useState('');
+  const [loanType, setLoanType] = useState('Book Loan');
+
+  // Repayment states
+  const [selectedLoanId, setSelectedLoanId] = useState('');
+  const [principalRepaymentAmount, setPrincipalRepaymentAmount] = useState('');
+  const [interestRepaymentAmount, setInterestRepaymentAmount] = useState('');
+  const [repaymentDate, setRepaymentDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // Expense states
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
+  const [expenseDescription, setExpenseDescription] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('Stationery');
+
+  // Meeting states
+  const [meetings, setMeetings] = useState([]);
+  const [meetingDate, setMeetingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [meetingAgenda, setMeetingAgenda] = useState('');
+  const [meetingMinutes, setMeetingMinutes] = useState('');
+  const [selectedMeetingAttendees, setSelectedMeetingAttendees] = useState([]);
+
+  // ---------- Transaction edit / delete state (paste near other useState declarations) ----------
+const [editingTransaction, setEditingTransaction] = useState(null); // transaction object to edit
+const [showTransactionModal, setShowTransactionModal] = useState(false);
+
+// Filters for transactions (for Bookkeeping & Accounting lists)
+const [txFilterMemberId, setTxFilterMemberId] = useState(''); // '' = all
+const [txFilterType, setTxFilterType] = useState(''); // '' = all (Saving, Expense, Loan Disbursed, Loan Repayment, Bank Loan Repayment, Fine)
+const [txFilterDateFrom, setTxFilterDateFrom] = useState('');
+const [txFilterDateTo, setTxFilterDateTo] = useState('');
+
+// ---------- Edit/Delete helpers ----------
+const openEditTransaction = (tx) => {
+  // ensure we have local string values for editing inputs
+  setEditingTransaction({
+    ...tx,
+    // ensure amounts are strings for inputs
+    amount: tx.amount !== undefined ? String(tx.amount) : '',
+    principalRepaid: tx.principalRepaid !== undefined ? String(tx.principalRepaid) : '',
+    interestRepaid: tx.interestRepaid !== undefined ? String(tx.interestRepaid) : '',
+    date: tx.date ? tx.date.split('T')[0] : (new Date().toISOString().split('T')[0])
+  });
+  setShowTransactionModal(true);
+};
+
+const saveEditedTransaction = async () => {
+  if (!editingTransaction || !db || !userId || !shgId) {
+    setAlertMessage("Nothing to save or app not ready.");
+    setShowAlert(true);
+    return;
+  }
+  const projectId = getCurrentProjectId();
+  try {
+    const txRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`, editingTransaction.id);
+    // Build update object from editingTransaction (convert numeric fields)
+    const updateObj = {
+      date: editingTransaction.date,
+      description: editingTransaction.description || '',
+      updatedAt: serverTimestamp(),
+    };
+    if (editingTransaction.amount !== undefined) updateObj.amount = parseFloat(editingTransaction.amount) || 0;
+    if (editingTransaction.principalRepaid !== undefined) updateObj.principalRepaid = editingTransaction.principalRepaid === '' ? null : (parseFloat(editingTransaction.principalRepaid) || 0);
+    if (editingTransaction.interestRepaid !== undefined) updateObj.interestRepaid = editingTransaction.interestRepaid === '' ? null : (parseFloat(editingTransaction.interestRepaid) || 0);
+    if (editingTransaction.savingType !== undefined) updateObj.savingType = editingTransaction.savingType || null;
+    if (editingTransaction.loanType !== undefined) updateObj.loanType = editingTransaction.loanType || null;
+    if (editingTransaction.category !== undefined) updateObj.category = editingTransaction.category || null;
+    if (editingTransaction.memberId !== undefined) updateObj.memberId = editingTransaction.memberId || null;
+
+    await updateDoc(txRef, updateObj);
+    setAlertMessage("Transaction updated successfully.");
+    setShowAlert(true);
+    setShowTransactionModal(false);
+    setEditingTransaction(null);
+  } catch (err) {
+    console.error("saveEditedTransaction error", err);
+    setAlertMessage("Failed to save transaction: " + (err.message || err));
+    setShowAlert(true);
+  }
+};
+
+const handleDeleteTransaction = (tx) => {
+  setAlertMessage("Are you sure you want to delete this transaction? This action cannot be undone.");
+  setConfirmAction(() => async () => {
+    if (!db || !userId || !shgId) {
+      setAlertMessage("App not ready: DB/user/SHG not initialized.");
+      setShowAlert(true);
+      setConfirmAction(null);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+    try {
+      await deleteDoc(doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`, tx.id));
+      setAlertMessage("Transaction deleted.");
+      setShowAlert(true);
+    } catch (err) {
+      console.error("delete transaction error", err);
+      setAlertMessage("Failed to delete transaction: " + (err.message || err));
+      setShowAlert(true);
+    } finally {
+      setConfirmAction(null);
+    }
+  });
+  setShowAlert(true);
+};
+
+  // Helper function to get member name by ID
+  const getMemberName = (memberId) => {
+    const member = members.find(m => m.id === memberId);
+    return member ? member.name : 'Unknown Member';
+  };
+  // Helper function to get member mobile by ID
+  const getMemberMobile = (memberId) => {
+    const member = members.find(m => m.id === memberId);
+    return member ? member.mobile : '';
+  };
+
+  // Initialize Firebase and handle authentication
+  useEffect(() => {
+    const initFirebase = async () => {
+      let activeFirebaseConfig = firebaseConfig; // Start with the hardcoded config
+      let initialAuthToken = null;
+      let usingCanvasConfig = false;
+
+      // Check if Canvas environment variables are available.
+      if (typeof window.__firebase_config !== 'undefined' && typeof window.__initial_auth_token !== 'undefined') {
+        try {
+          activeFirebaseConfig = JSON.parse(window.__firebase_config);
+          initialAuthToken = window.__initial_auth_token;
+          usingCanvasConfig = true;
+          console.log("Using Canvas-provided Firebase configuration.");
+        } catch (e) {
+          console.error("Error parsing __firebase_config from Canvas:", e);
+          setAlertMessage(`Error parsing Canvas Firebase configuration: ${e.message}`);
+          setShowAlert(true);
+          activeFirebaseConfig = firebaseConfig;
+          initialAuthToken = null; 
+          usingCanvasConfig = false;
+        }
+      } else {
+        console.log("Canvas Firebase configuration not found. Using hardcoded config.");
+      }
+
+      try {
+        const app = initializeApp(activeFirebaseConfig);
+        const firestore = getFirestore(app);
+        const authInstance = getAuth(app);
+
+        setDb(firestore);
+        setAuth(authInstance);
+
+        onAuthStateChanged(authInstance, async (user) => {
+          if (user) {
+            setUserId(user.uid);
+            console.log("Firebase user ID:", user.uid);
+            console.log("Firestore successfully initialized and user authenticated.");
+            setShowLoginScreen(false); // Hide login screen on successful auth
+            await loadShgData(firestore, user.uid, activeFirebaseConfig.projectId);
+          } else {
+            console.log("No user signed in. Checking for custom token or showing login.");
+            try {
+              if (usingCanvasConfig && initialAuthToken) {
+                await signInWithCustomToken(authInstance, initialAuthToken);
+                console.log("Signed in with custom token (Canvas).");
+                setShowLoginScreen(false);
+              } else {
+                // If no user and not using Canvas token, show login screen
+                setShowLoginScreen(true); 
+                console.log("No persistent user found. Showing login screen.");
+              }
+            } catch (error) {
+              console.error("Firebase Auth Error during sign-in:", error);
+              // Only set alert if it's not the initial "no user" state
+              if (error.code !== 'auth/no-current-user') {
+                setAlertMessage(`Authentication failed: ${error.message}`);
+                setShowAlert(true);
+              }
+              setShowLoginScreen(true); // Ensure login screen is shown on auth errors
+            }
+          }
+          setLoading(false);
+        });
+      } catch (error) {
+        console.error("Error initializing Firebase:", error);
+        setAlertMessage(`Firebase initialization failed: ${error.message}`);
+        setShowAlert(true);
+        setLoading(false);
+      }
+    };
+
+    initFirebase();
+  }, []); 
+
+  // Load SHG data after authentication and db is ready
+  const loadShgData = async (firestore, currentUserId, projectId) => {
+    if (!firestore || !currentUserId || !projectId) return;
+
+    try {
+      // Use projectId from the active configuration
+      const userShgDocRef = doc(firestore, `artifacts/${projectId}/users/${currentUserId}/shg_group/main`);
+      const userShgDocSnap = await getDoc(userShgDocRef);
+
+      if (userShgDocSnap.exists()) {
+        const data = userShgDocSnap.data();
+        setShgName(data.name || 'My SHG');
+        setShgId(data.id || userShgDocSnap.id);
+        setShgLogoUrl(data.logoUrl || '');
+        console.log("Loaded existing SHG:", data.name, "ID:", data.id, "Logo:", data.logoUrl);
+      } else {
+        const newShgDocRef = doc(firestore, `artifacts/${projectId}/users/${currentUserId}/shg_group/main`);
+        const newShgData = {
+          id: userShgDocRef.id,
+          name: 'My New SHG',
+          createdAt: new Date().toISOString(),
+          adminId: currentUserId,
+          logoUrl: '',
+        };
+        await setDoc(newShgDocRef, newShgData);
+        setShgName(newShgData.name);
+        setShgId(newShgData.id);
+        setShgLogoUrl(newShgData.logoUrl);
+        console.log("Created new SHG:", newShgData.name, "ID:", newShgData.id);
+      }
+    } catch (error) {
+      console.error("Error loading/creating SHG data:", error);
+      setAlertMessage(`Error loading SHG data: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  // Helper to get the current projectId from the active Firebase app
+  const getCurrentProjectId = () => {
+    if (db && db.app && db.app.options && db.app.options.projectId) {
+      return db.app.options.projectId;
+    }
+    return firebaseConfig.projectId; // Fallback to hardcoded if not found in initialized app
+  };
+
+
+  const updateShgDetails = async (newName, newLogoUrl) => {
+    if (!db || !userId || !shgId || !newName.trim()) {
+      setAlertMessage("SHG Name cannot be empty.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+    try {
+      const shgDocRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_group/main`);
+      await updateDoc(shgDocRef, {
+        name: newName.trim(),
+        logoUrl: newLogoUrl.trim(),
+        updatedAt: new Date().toISOString()
+      });
+      setShgName(newName.trim());
+      setShgLogoUrl(newLogoUrl.trim());
+      setAlertMessage("SHG details updated successfully!");
+      setShowAlert(true);
+    } catch (error) {
+      console.error("Error updating SHG details:", error);
+      setAlertMessage(`Error updating SHG details: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  const deleteShg = async () => {
+    if (!db || !userId || !shgId) {
+      setAlertMessage("SHG data not loaded or user not authenticated.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+
+    setAlertMessage("Are you absolutely sure you want to delete this SHG? This action is irreversible and will delete ALL members, transactions, loans, and meetings associated with this SHG.");
+    setConfirmAction(() => async () => {
+        try {
+            // Delete members and their subcollections (transactions, loans, meetings)
+            const membersCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`);
+            const memberDocs = await getDocs(membersCollectionRef);
+            await Promise.all(memberDocs.docs.map(async (memberDoc) => {
+                const memberIdToDelete = memberDoc.id;
+
+                // Delete associated transactions
+                const memberTransactionsQuery = query(
+                    collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`),
+                    where("memberId", "==", memberIdToDelete)
+                );
+                const transactionDocs = await getDocs(memberTransactionsQuery);
+                await Promise.all(transactionDocs.docs.map(d => deleteDoc(d.ref)));
+
+                // Delete associated loans
+                const memberLoansQuery = query(
+                    collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`),
+                    where("memberId", "==", memberIdToDelete)
+                );
+                const loanDocs = await getDocs(memberLoansQuery);
+                await Promise.all(loanDocs.docs.map(d => deleteDoc(d.ref)));
+
+                // Delete the member document itself
+                await deleteDoc(memberDoc.ref);
+            }));
+
+            // Delete all remaining transactions (if any not linked to a member)
+            const allTransactionsRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`);
+            const allTransactionDocs = await getDocs(allTransactionsRef);
+            await Promise.all(allTransactionDocs.docs.map(d => deleteDoc(d.ref)));
+
+            // Delete all remaining loans (if any not linked to a member)
+            const allLoansRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`);
+            const allLoanDocs = await getDocs(allLoansRef);
+            await Promise.all(allLoanDocs.docs.map(d => deleteDoc(d.ref)));
+
+            // Delete all meetings
+            const meetingsRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/meetings`);
+            const meetingDocs = await getDocs(meetingsRef);
+            await Promise.all(meetingDocs.docs.map(d => deleteDoc(d.ref)));
+
+            // Finally, delete the SHG main document
+            const shgDocRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_group/main`);
+            await deleteDoc(shgDocRef);
+
+            // Clear local state and sign out
+            setShgName('');
+            setShgId('');
+            setShgLogoUrl('');
+            setMembers([]);
+            setTransactions([]);
+            setLoans([]);
+            setMeetings([]);
+            await signOut(auth); 
+            setAlertMessage("SHG and all associated data deleted successfully. You have been signed out.");
+            setShowAlert(true);
+        } catch (error) {
+            console.error("Error deleting SHG and its data:", error);
+            setAlertMessage(`Error deleting SHG: ${error.message}`);
+            setShowAlert(true);
+        } finally {
+            setConfirmAction(null);
+            setAlertCopyContent(null);
+        }
+    });
+    setShowAlert(true);
+  };
+
+
+  // Fetch members when db, userId, or shgId changes
+  useEffect(() => {
+    const projectId = getCurrentProjectId(); 
+    if (db && userId && shgId && projectId) {
+      const membersCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`);
+      const q = query(membersCollectionRef);
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const membersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setMembers(membersData);
+        console.log("Members fetched:", membersData);
+      }, (error) => {
+        console.error("Error fetching members:", error);
+        setAlertMessage(`Error fetching members: ${error.message}`);
+        setShowAlert(true);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId, shgId]); 
+
+  // Fetch transactions when db, userId, or shgId changes
+  useEffect(() => {
+    const projectId = getCurrentProjectId();
+    if (db && userId && shgId && projectId) {
+      const transactionsCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`);
+      const q = query(transactionsCollectionRef);
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const transactionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        transactionsData.sort((a, b) => new Date(b.date) - new Date(a.date));
+        setTransactions(transactionsData);
+        console.log("Transactions fetched:", transactionsData);
+      }, (error) => {
+        console.error("Error fetching transactions:", error);
+        setAlertMessage(`Error fetching transactions: ${error.message}`);
+        setShowAlert(true);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId, shgId]);
+
+  // Fetch loans when db, userId, or shgId changes
+  useEffect(() => {
+    const projectId = getCurrentProjectId();
+    if (db && userId && shgId && projectId) {
+      const loansCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`);
+      const q = query(loansCollectionRef);
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const loansData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLoans(loansData);
+        console.log("Loans fetched:", loansData);
+      }, (error) => {
+        console.error("Error fetching loans:", error);
+        setAlertMessage(`Error fetching loans: ${error.message}`);
+        setShowAlert(true);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId, shgId]);
+
+  // Fetch meetings when db, userId, or shgId changes
+  useEffect(() => {
+    const projectId = getCurrentProjectId();
+    if (db && userId && shgId && projectId) {
+      const meetingsCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/meetings`);
+      const q = query(meetingsCollectionRef);
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const meetingsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        meetingsData.sort((a, b) => new Date(b.date) - new Date(a.date)); 
+        setMeetings(meetingsData);
+        console.log("Meetings fetched:", meetingsData);
+      }, (error) => {
+        console.error("Error fetching meetings:", error);
+        setAlertMessage(`Error fetching meetings: ${error.message}`);
+        setShowAlert(true);
+      });
+
+      return () => unsubscribe();
+    }
+  }, [db, userId, shgId]);
+
+
+  const addOrUpdateMember = async () => {
+    if (!db || !userId || !shgId || !newMemberName.trim() || !newMemberMobile.trim() || !newMemberDesignation.trim()) {
+      setAlertMessage("Please fill in Member Name, Mobile Number, and Designation.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+
+    try {
+      const memberData = {
+        name: newMemberName.trim(),
+        mobile: newMemberMobile.trim(),
+        email: newMemberEmail.trim(),
+        joiningDate: newMemberJoiningDate,
+        designation: newMemberDesignation,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (editingMember) {
+        const memberRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`, editingMember.id);
+        await updateDoc(memberRef, memberData);
+        setAlertMessage("Member updated successfully!");
+      } else {
+        await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`), {
+          ...memberData,
+          createdAt: new Date().toISOString(),
+          addedBy: userId
+        });
+        setAlertMessage("Member added successfully!");
+      }
+      setShowAlert(true);
+      setShowMemberModal(false);
+      setNewMemberName('');
+      setNewMemberMobile('');
+      setNewMemberEmail('');
+      setNewMemberJoiningDate(new Date().toISOString().split('T')[0]);
+      setNewMemberDesignation('member');
+      setEditingMember(null);
+    } catch (error) {
+      console.error("Error adding/updating member:", error);
+      setAlertMessage(`Error adding/updating member: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  const handleDeleteMember = (memberId) => {
+    setAlertMessage("Are you sure you want to delete this member? This will also delete their associated transactions and loans.");
+    setConfirmAction(() => async () => {
+      const projectId = getCurrentProjectId();
+      try {
+        const memberRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`, memberId);
+        await deleteDoc(memberRef);
+
+        // Delete associated transactions
+        const memberTransactionsQuery = query(
+          collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`),
+          where("memberId", "==", memberId)
+        );
+        const transactionDocs = await getDocs(memberTransactionsQuery);
+        // Use Promise.all to await all deletions
+        await Promise.all(transactionDocs.docs.map(d => deleteDoc(d.ref)));
+
+
+        // Delete associated loans
+        const memberLoansQuery = query(
+          collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`),
+          where("memberId", "==", memberId)
+        );
+        const loanDocs = await getDocs(memberLoansQuery);
+        // Use Promise.all to await all deletions
+        await Promise.all(loanDocs.docs.map(d => deleteDoc(d.ref)));
+
+        setAlertMessage("Member and associated data deleted successfully!");
+        setShowAlert(true);
+      } catch (error) {
+        console.error("Error deleting member:", error);
+        setAlertMessage(`Error deleting member: ${error.message}`);
+        setShowAlert(true);
+      } finally {
+        setConfirmAction(null); 
+        setAlertCopyContent(null);
+      }
+    });
+    setShowAlert(true); 
+  };
+
+
+  const openAddMemberModal = () => {
+    setEditingMember(null);
+    setNewMemberName('');
+    setNewMemberMobile('');
+    setNewMemberEmail('');
+    setNewMemberJoiningDate(new Date().toISOString().split('T')[0]);
+    setNewMemberDesignation('member');
+    setShowMemberModal(true);
+  };
+
+  const openEditMemberModal = (member) => {
+    setEditingMember(member);
+    setNewMemberName(member.name);
+    setNewMemberMobile(member.mobile || '');
+    setNewMemberEmail(member.email || '');
+    setNewMemberJoiningDate(member.joiningDate || new Date().toISOString().split('T')[0]);
+    setNewMemberDesignation(member.designation || 'member');
+    setShowMemberModal(true);
+  };
+
+  const handleSignOut = async () => {
+    if (auth) {
+      try {
+        await signOut(auth);
+        setUserId(null);
+        setShgName('');
+        setShgId('');
+        setShgLogoUrl('');
+        setMembers([]);
+        setTransactions([]);
+        setLoans([]);
+        setMeetings([]);
+        setAlertMessage("Signed out successfully!");
+        setShowAlert(true);
+      } catch (error) {
+        console.error("Error signing out:", error);
+        setAlertMessage(`Error signing out: ${error.message}`);
+        setShowAlert(true);
+      }
+    }
+  };
+// -----------------------------
+// Unified transaction helper
+// Paste this **above** the existing `recordSaving` function
+// -----------------------------
+const addTransaction = async (transaction) => {
+  // transaction = an object, e.g.
+  // { type:'Saving'|'Loan Repayment'|'Expense'|'Loan Disbursed', memberId, amount, date, savingType, loanId, principalRepayment, interestRepayment, loanType, category, description }
+  if (!db || !userId || !shgId) {
+    setAlertMessage("App not ready: DB/user/SHG not initialized.");
+    setShowAlert(true);
+    return;
+  }
+  const projectId = getCurrentProjectId();
+  try {
+    // If this is a loan repayment, update the loan document first
+    if (transaction.type === 'Loan Repayment' && transaction.loanId) {
+      const loanRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`, transaction.loanId);
+      const loanSnap = await getDoc(loanRef);
+      if (loanSnap.exists()) {
+        const loan = loanSnap.data();
+        const principal = parseFloat(transaction.principalRepayment || transaction.principalRepaid || 0);
+        const interest = parseFloat(transaction.interestRepayment || transaction.interestRepaid || 0);
+        const totalRepayment = principal + interest;
+
+        let newOutstanding = (loan.outstandingAmount || 0) - principal;
+        let newTotalRepaid = (loan.totalRepaid || 0) + totalRepayment;
+        let newStatus = loan.status || 'active';
+        if (newOutstanding <= 0) {
+          newOutstanding = 0;
+          newStatus = 'closed';
+        }
+
+        await updateDoc(loanRef, {
+          outstandingAmount: newOutstanding,
+          totalRepaid: newTotalRepaid,
+          status: newStatus,
+          updatedAt: serverTimestamp(),
+        });
+
+        // fill memberId and description if not provided
+        transaction.memberId = transaction.memberId || loan.memberId;
+        transaction.description = transaction.description || `Repayment for loan (${loan.loanType}) to ${getMemberName(loan.memberId)}`;
+      }
+    }
+
+    // Build transaction document to save
+    const txDoc = {
+      type: transaction.type,
+      memberId: transaction.memberId || null,
+      loanId: transaction.loanId || null,
+      // amount: prefer explicit amount, otherwise compute from principal+interest if present
+      amount: transaction.amount ? parseFloat(transaction.amount) :
+              (transaction.principalRepayment ? parseFloat(transaction.principalRepayment || 0) + parseFloat(transaction.interestRepayment || 0) : 0),
+      principalRepaid: transaction.principalRepayment || transaction.principalRepaid || null,
+      interestRepaid: transaction.interestRepayment || transaction.interestRepaid || null,
+      savingType: transaction.savingType || null,
+      loanType: transaction.loanType || null,
+      category: transaction.category || null,
+      date: transaction.date || new Date().toISOString().split('T')[0],
+      description: transaction.description || transaction.notes || '',
+      createdAt: serverTimestamp(),
+      recordedBy: userId,
+    };
+
+    await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`), txDoc);
+    setAlertMessage(`${transaction.type} recorded successfully!`);
+    setShowAlert(true);
+  } catch (error) {
+    console.error("addTransaction error:", error);
+    setAlertMessage(`Error recording ${transaction.type}: ${error.message}`);
+    setShowAlert(true);
+  }
+};
+
+const recordSaving = async () => {
+  if (!db || !userId || !shgId || !selectedMemberId || !savingAmount || isNaN(parseFloat(savingAmount)) || parseFloat(savingAmount) <= 0 || !savingType.trim()) {
+    setAlertMessage("Please select a member, enter a valid positive saving amount, and select a saving type.");
+    setShowAlert(true);
+    return;
+  }
+
+  // delegate to unified helper
+  await addTransaction({
+    type: 'Saving',
+    memberId: selectedMemberId,
+    amount: parseFloat(savingAmount),
+    date: savingDate,
+    savingType: savingType
+  });
+
+  // clear form fields (addTransaction already sets success alert)
+  setSelectedMemberId('');
+  setSavingAmount('');
+  setSavingDate(new Date().toISOString().split('T')[0]);
+  setSavingType('Monthly Saving');
+};
+
+  const recordLoanDisbursement = async () => {
+    if (!db || !userId || !shgId || !loanMemberId || !loanAmount || isNaN(parseFloat(loanAmount)) || parseFloat(loanAmount) <= 0 ||
+        !loanInterestRate || isNaN(parseFloat(loanInterestRate)) || parseFloat(loanInterestRate) < 0 ||
+        !loanTermMonths || isNaN(parseInt(loanTermMonths)) || parseInt(loanTermMonths) <= 0 || !loanType.trim()) {
+      setAlertMessage("Please fill all loan details with valid positive numbers and select a loan type.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+
+    try {
+      const newLoanRef = doc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`));
+      const loanData = {
+        id: newLoanRef.id,
+        memberId: loanMemberId,
+        principalAmount: parseFloat(loanAmount),
+        outstandingAmount: parseFloat(loanAmount),
+        totalRepaid: 0,
+        interestRate: parseFloat(loanInterestRate),
+        termMonths: parseInt(loanTermMonths),
+        disbursementDate: loanDate,
+        description: loanDescription.trim(),
+        status: 'active',
+        loanType: loanType,
+        createdAt: serverTimestamp(),
+        disbursedBy: userId,
+      };
+      await setDoc(newLoanRef, loanData);
+
+      await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`), {
+        type: 'Loan Disbursed',
+        loanId: newLoanRef.id,
+        memberId: loanMemberId,
+        amount: parseFloat(loanAmount),
+        date: loanDate,
+        description: loanDescription.trim(),
+        loanType: loanType,
+        createdAt: serverTimestamp(),
+        recordedBy: userId,
+      });
+
+      setAlertMessage("Loan disbursed successfully!");
+      setShowAlert(true);
+      setLoanMemberId('');
+      setLoanAmount('');
+      setLoanInterestRate('');
+      setLoanTermMonths('');
+      setLoanDate(new Date().toISOString().split('T')[0]);
+      setLoanDescription('');
+      setLoanType('Book Loan');
+    } catch (error) {
+      console.error("Error recording loan disbursement:", error);
+      setAlertMessage(`Error recording loan disbursement: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+const recordLoanRepayment = async () => {
+  if (!db || !userId || !shgId || !selectedLoanId ||
+      (isNaN(parseFloat(principalRepaymentAmount)) || parseFloat(principalRepaymentAmount) < 0) ||
+      (isNaN(parseFloat(interestRepaymentAmount)) || parseFloat(interestRepaymentAmount) < 0) ||
+      (parseFloat(principalRepaymentAmount) + parseFloat(interestRepaymentAmount) <= 0)
+  ) {
+    setAlertMessage("Please select a loan and enter valid positive principal and/or interest repayment amounts.");
+    setShowAlert(true);
+    return;
+  }
+
+  const principal = parseFloat(principalRepaymentAmount || 0);
+  const interest = parseFloat(interestRepaymentAmount || 0);
+
+  // delegate to unified helper — helper will update the loan doc (outstanding/total) and add transaction
+  await addTransaction({
+    type: 'Loan Repayment',
+    loanId: selectedLoanId,
+    principalRepayment: principal,
+    interestRepayment: interest,
+    date: repaymentDate,
+  });
+
+  // clear form fields
+  setSelectedLoanId('');
+  setPrincipalRepaymentAmount('');
+  setInterestRepaymentAmount('');
+  setRepaymentDate(new Date().toISOString().split('T')[0]);
+};
+
+  const recordExpense = async () => {
+    if (!db || !userId || !shgId || !expenseAmount || isNaN(parseFloat(expenseAmount)) || parseFloat(expenseAmount) <= 0 || !expenseCategory.trim()) {
+      setAlertMessage("Please enter a valid positive expense amount and select a category.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+
+    try {
+      await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`), {
+        type: 'Expense',
+        amount: parseFloat(expenseAmount),
+        date: expenseDate,
+        category: expenseCategory,
+        description: expenseDescription.trim(),
+        createdAt: serverTimestamp(),
+        recordedBy: userId,
+      });
+      setAlertMessage("Expense recorded successfully!");
+      setShowAlert(true);
+      setExpenseAmount('');
+      setExpenseDate(new Date().toISOString().split('T')[0]);
+      setExpenseDescription('');
+      setExpenseCategory('Stationery');
+    } catch (error) {
+      console.error("Error recording expense:", error);
+      setAlertMessage(`Error recording expense: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  const recordMeeting = async () => {
+    if (!db || !userId || !shgId || !meetingDate || !meetingAgenda.trim() || selectedMeetingAttendees.length === 0) {
+      setAlertMessage("Please fill in meeting date, agenda, and select at least one attendee.");
+      setShowAlert(true);
+      return;
+    }
+    const projectId = getCurrentProjectId();
+
+    try {
+      await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/meetings`), {
+        date: meetingDate,
+        agenda: meetingAgenda.trim(),
+        minutes: meetingMinutes.trim(),
+        attendees: selectedMeetingAttendees,
+        createdAt: serverTimestamp(),
+        recordedBy: userId,
+      });
+      setAlertMessage("Meeting recorded successfully!");
+      setShowAlert(true);
+      setMeetingDate(new Date().toISOString().split('T')[0]);
+      setMeetingAgenda('');
+      setMeetingMinutes('');
+      setSelectedMeetingAttendees([]);
+    } catch (error) {
+      console.error("Error recording meeting:", error);
+      setAlertMessage(`Error recording meeting: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+
+  // Calculate current balance
+  const currentBalance = transactions.reduce((sum, transaction) => {
+    if (transaction.type === 'Saving' || transaction.type === 'Loan Repayment') {
+      return sum + transaction.amount;
+    }
+    if (transaction.type === 'Loan Disbursed' || transaction.type === 'Expense') {
+      return sum - transaction.amount;
+    }
+    return sum;
+  }, 0);
+
+  // Calculate total outstanding loans
+  const totalOutstandingLoans = loans.reduce((sum, loan) => {
+    return sum + loan.outstandingAmount;
+  }, 0);
+
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+        <div className="text-xl font-semibold">Loading App...</div>
+      </div>
+    );
+  }
+
+  // If login screen is to be shown, render it instead of the main app
+  if (showLoginScreen) {
+    return <LoginScreen auth={auth} setShowLoginScreen={setShowLoginScreen} setAlertMessage={setAlertMessage} setShowAlert={setShowAlert} />;
+  }
+
+  // Handle copying content to clipboard from the custom alert
+  const handleCopyToClipboard = () => {
+    if (alertCopyContent) {
+      const textarea = document.createElement('textarea');
+      textarea.value = alertCopyContent;
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        console.log("Content copied to clipboard!");
+      } catch (err) {
+        console.error("Failed to copy content:", err);
+        setAlertMessage("Failed to copy numbers. Please try again or copy manually.");
+        setShowAlert(true);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      setShowAlert(false);
+      setAlertCopyContent(null);
+    }
+  };
+
+
+  return (
+    <FirebaseContext.Provider value={{ db, auth }}>
+      <AuthContext.Provider value={{ userId }}>
+        <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100">
+          {/* Alert/Confirmation Modal */}
+          {showAlert && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                <p className="text-lg font-medium text-gray-800 dark:text-gray-100 mb-4 whitespace-pre-wrap">{alertMessage}</p>
+                <div className="flex justify-center space-x-4">
+                  {alertCopyContent && (
+                    <button
+                      onClick={handleCopyToClipboard}
+                      className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out"
+                    >
+                      Copy Numbers
+                    </button>
+                  )}
+                  {confirmAction && (
+                    <button
+                      onClick={() => {
+                        confirmAction();
+                        setShowAlert(false);
+                        setAlertCopyContent(null);
+                      }}
+                      className="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition duration-200 ease-in-out"
+                    >
+                      Confirm
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setShowAlert(false);
+                      setConfirmAction(null);
+                      setAlertCopyContent(null);
+                    }}
+                    className={`px-6 py-2 ${alertCopyContent !== null || confirmAction !== null ? 'bg-gray-300 text-gray-800 hover:bg-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out`}
+                  >
+                    {(alertCopyContent !== null || confirmAction !== null) ? 'Cancel' : 'OK'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Header */}
+          <header className="bg-white dark:bg-gray-800 shadow-md p-4 flex items-center justify-between sticky top-0 z-40">
+            <div className="flex items-center space-x-2">
+                {shgLogoUrl ? (
+                    <img src={shgLogoUrl} alt="SHG Logo" className="h-10 w-10 rounded-full object-cover"/>
+                ) : (
+                    <span className="mr-2 text-3xl">🌟</span>
+                )}
+                <h1 className="text-2xl font-bold text-blue-700 dark:text-blue-400">
+                    {shgName || 'SHG Manager'}
+                </h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              {userId && (
+                <span className="text-sm text-gray-600 dark:text-gray-400 truncate hidden md:block">
+                  User ID: {userId}
+                </span>
+              )}
+              <button
+                onClick={handleSignOut}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition duration-200 ease-in-out"
+              >
+                Sign Out
+              </button>
+            </div>
+          </header>
+
+          {/* Main Content Area */}
+          <main className="flex-1 p-4 md:p-6 pb-20 overflow-auto">
+            {/* Page Content */}
+            {currentPage === 'dashboard' && (
+              <DashboardScreen
+                shgName={shgName}
+                shgId={shgId}
+                memberCount={members.length}
+                currentBalance={currentBalance}
+                totalOutstandingLoans={totalOutstandingLoans}
+                setCurrentPage={setCurrentPage}
+                members={members}
+                getMemberMobile={getMemberMobile}
+                setAlertMessage={setAlertMessage}
+                setShowAlert={setShowAlert}
+                setAlertCopyContent={setAlertCopyContent}
+              />
+            )}
+            {currentPage === 'shgProfile' && (
+              <ShgProfileScreen
+                shgName={shgName}
+                shgLogoUrl={shgLogoUrl}
+                shgId={shgId}
+                updateShgDetails={updateShgDetails}
+                deleteShg={deleteShg}
+                setAlertMessage={setAlertMessage}
+                setShowAlert={setShowAlert}
+              />
+            )}
+            {currentPage === 'members' && (
+              <MembersScreen
+                members={members}
+                openAddMemberModal={openAddMemberModal}
+                openEditMemberModal={openEditMemberModal}
+                deleteMember={handleDeleteMember}
+              />
+            )}
+{currentPage === 'bookkeeping' && (
+  <BookkeepingScreen
+    members={members}
+    transactions={transactions}
+    loans={loans}
+
+    // saving
+    selectedMemberId={selectedMemberId}
+    setSelectedMemberId={setSelectedMemberId}
+    savingAmount={savingAmount}
+    setSavingAmount={setSavingAmount}
+    savingDate={savingDate}
+    setSavingDate={setSavingDate}
+    savingType={savingType}
+    setSavingType={setSavingType}
+    recordSaving={recordSaving}
+
+    // loan disbursement
+    loanMemberId={loanMemberId}
+    setLoanMemberId={setLoanMemberId}
+    loanAmount={loanAmount}
+    setLoanAmount={setLoanAmount}
+    loanInterestRate={loanInterestRate}
+    setLoanInterestRate={setLoanInterestRate}
+    loanTermMonths={loanTermMonths}
+    setLoanTermMonths={setLoanTermMonths}
+    loanDate={loanDate}
+    setLoanDate={setLoanDate}
+    loanDescription={loanDescription}
+    setLoanDescription={setLoanDescription}
+    loanType={loanType}
+    setLoanType={setLoanType}
+    recordLoanDisbursement={recordLoanDisbursement}
+
+    // repayment
+    selectedLoanId={selectedLoanId}
+    setSelectedLoanId={setSelectedLoanId}
+    principalRepaymentAmount={principalRepaymentAmount}
+    setPrincipalRepaymentAmount={setPrincipalRepaymentAmount}
+    interestRepaymentAmount={interestRepaymentAmount}
+    setInterestRepaymentAmount={setInterestRepaymentAmount}
+    repaymentDate={repaymentDate}
+    setRepaymentDate={setRepaymentDate}
+    recordLoanRepayment={recordLoanRepayment}
+
+    // expense
+    expenseAmount={expenseAmount}
+    setExpenseAmount={setExpenseAmount}
+    expenseDate={expenseDate}
+    setExpenseDate={setExpenseDate}
+    expenseDescription={expenseDescription}
+    setExpenseDescription={setExpenseDescription}
+    expenseCategory={expenseCategory}
+    setExpenseCategory={setExpenseCategory}
+    recordExpense={recordExpense}
+
+    // table hooks
+    openEditTransaction={openEditTransaction}
+    handleDeleteTransaction={handleDeleteTransaction}
+    getMemberName={getMemberName}
+  />
+)}
+            {currentPage === 'accounting' && (
+              <AccountingScreen
+                transactions={transactions}
+                loans={loans}
+                members={members}
+                getMemberName={getMemberName}
+                currentBalance={currentBalance}
+                totalOutstandingLoans={totalOutstandingLoans}
+                setAlertMessage={setAlertMessage}
+                setShowAlert={setShowAlert}
+                db={db} 
+                userId={userId} 
+                shgId={shgId} 
+                getCurrentProjectId={getCurrentProjectId} 
+              />
+            )}
+            {currentPage === 'meetings' && (
+              <MeetingsScreen
+                members={members}
+                meetings={meetings}
+                meetingDate={meetingDate}
+                setMeetingDate={setMeetingDate}
+                meetingAgenda={meetingAgenda}
+                setMeetingAgenda={setMeetingAgenda}
+                meetingMinutes={meetingMinutes}
+                setMeetingMinutes={setMeetingMinutes}
+                selectedMeetingAttendees={selectedMeetingAttendees}
+                setSelectedMeetingAttendees={setSelectedMeetingAttendees}
+                recordMeeting={recordMeeting}
+                getMemberName={getMemberName}
+              />
+            )}
+            {currentPage === 'multiUserInfo' && (
+              <MultiUserAccessInfo />
+            )}
+          </main>
+
+          {/* Navigation Bar */}
+          <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 shadow-lg p-3 border-t border-gray-200 dark:border-gray-700 flex justify-around items-center z-50">
+            <NavItem icon="🏠" label="Dashboard" onClick={() => setCurrentPage('dashboard')} active={currentPage === 'dashboard'} />
+            <NavItem icon="⚙️" label="SHG Profile" onClick={() => setCurrentPage('shgProfile')} active={currentPage === 'shgProfile'} />
+            <NavItem icon="👥" label="Members" onClick={() => setCurrentPage('members')} active={currentPage === 'members'} />
+            <NavItem icon=" Finance " label="Bookkeeping" onClick={() => setCurrentPage('bookkeeping')} active={currentPage === 'bookkeeping'} />
+            <NavItem icon=" 📈 " label="Accounting" onClick={() => setCurrentPage('accounting')} active={currentPage === 'accounting'} />
+            <NavItem icon=" 🗓️ " label="Meetings" onClick={() => setCurrentPage('meetings')} active={currentPage === 'meetings'} />
+            <NavItem icon="🔐" label="Multi-User Info" onClick={() => setCurrentPage('multiUserInfo')} active={currentPage === 'multiUserInfo'} />
+          </nav>
+
+<MemberFormModal
+  show={showMemberModal}
+  onClose={() => setShowMemberModal(false)}
+  onSubmit={addOrUpdateMember}
+  editingMember={editingMember}
+  newMemberName={newMemberName}
+  setNewMemberName={setNewMemberName}
+  newMemberMobile={newMemberMobile}
+  setNewMemberMobile={setNewMemberMobile}
+  newMemberEmail={newMemberEmail}
+  setNewMemberEmail={setNewMemberEmail}
+  newMemberJoiningDate={newMemberJoiningDate}
+  setNewMemberJoiningDate={setNewMemberJoiningDate}
+  newMemberDesignation={newMemberDesignation}
+  setNewMemberDesignation={setNewMemberDesignation}
+/>
+        </div>
+      </AuthContext.Provider>
+    </FirebaseContext.Provider>
+  );
+};
+
+
+// Login Screen Component 
+const LoginScreen = ({ auth, setShowLoginScreen, setAlertMessage, setShowAlert }) => {
+  const handleGoogleSignIn = async () => {
+    if (!auth) {
+      setAlertMessage("Firebase Auth is not initialized.");
+      setShowAlert(true);
+      return;
+    }
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      setAlertMessage("Signed in with Google successfully!");
+      setShowAlert(true);
+    } catch (error) {
+      console.error("Error signing in with Google:", error);
+      let errorMessage = "Failed to sign in with Google.";
+      if (error.code === 'auth/popup-closed-by-user') {
+        errorMessage = "Google sign-in popup was closed.";
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        errorMessage = "Sign-in already in progress or popup blocked.";
+      }
+      setAlertMessage(`${errorMessage} Please try again. Error: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  const handleAnonymousSignIn = async () => {
+    if (!auth) {
+      setAlertMessage("Firebase Auth is not initialized.");
+      setShowAlert(true);
+      return;
+    }
+    try {
+      await signInAnonymously(auth);
+      setAlertMessage("Signed in anonymously. Data may not persist across sessions.");
+      setShowAlert(true);
+    } catch (error) {
+      console.error("Error signing in anonymously:", error);
+      setAlertMessage(`Failed to sign in anonymously: ${error.message}`);
+      setShowAlert(true);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100 p-4">
+      <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+        <h2 className="text-3xl font-bold text-blue-700 dark:text-blue-400 mb-6">Welcome to SHG Manager</h2>
+        <p className="text-gray-700 dark:text-gray-300 mb-8">
+          Sign in to access your Self-Help Group data.
+        </p>
+        <button
+          onClick={handleGoogleSignIn}
+          className="w-full flex items-center justify-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold mb-4"
+        >
+          {/* eslint-disable-next-line no-undef */} 
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12.24 10.27c.45 0 .9-.05 1.33-.14C14.77 8.92 15.65 7.18 15.65 5c0-1.72-.47-3.32-1.3-4.5h-.01c.62.9 1 2 1 3.12 0 2.92-2.18 5.37-5 5.37-1.3 0-2.48-.48-3.4-1.29-.86-.77-1.4-1.85-1.4-3.08 0-2.28 1.45-4.22 3.48-5.11 1.9-.84 4.09-.59 5.86.64.9.61 1.63 1.48 2.12 2.47a.78.78 0 0 0 1.25-.56.78.78 0 0 0-.56-1.25c-.75-1.12-1.8-2.06-3.04-2.67C12.19 0 9.77.26 7.7 1.49c-2.47 1.55-3.9 4.34-3.9 7.42 0 1.93.58 3.73 1.6 5.23 1 1.4 2.5 2.53 4.1 3.15.7.26 1.4.39 2.1.39.22 0 .44-.01.66-.03.7-.09 1.39-.24 2.05-.44 1.1-.34 2.11-.86 3.03-1.6.45-.37.86-.78 1.22-1.2.3-.33.56-.69.76-1.07.1-.19.2-.38.28-.58.07-.18.12-.37.17-.56.04-.15.08-.3.1-.46.02-.09.04-.19.05-.28.01-.06.02-.12.02-.19l.01-.06V12.92c0-.52-.4-.95-.92-.95H12.24zM12 12c-2.67 0-4.85-2.18-4.85-4.85s2.18-4.85 4.85-4.85 4.85 2.18 4.85 4.85S14.67 12 12 12z"/></svg>
+          <span>Sign In with Google</span>
+        </button>
+        <button
+          onClick={handleAnonymousSignIn}
+          className="w-full px-6 py-3 bg-gray-500 text-white rounded-lg shadow-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+        >
+          Sign In Anonymously (for testing)
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+// NavItem Component
+const NavItem = ({ icon, label, onClick, active }) => {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center p-2 rounded-md transition-colors duration-200 ease-in-out ${
+        active ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+      }`}
+    >
+      <span className="text-2xl mb-1">{icon}</span>
+      <span className="text-xs font-medium">{label}</span>
+    </button>
+  );
+};
+
+// Dashboard Screen Component
+const DashboardScreen = ({ shgName, shgId, memberCount, currentBalance, totalOutstandingLoans, setCurrentPage, members, getMemberMobile, setAlertMessage, setShowAlert, setAlertCopyContent }) => {
+  // Function to send a WhatsApp reminder to a specific member
+  const sendWhatsAppReminder = (member) => {
+    if (!member || !member.mobile) {
+      setAlertMessage("Member or mobile number not available for WhatsApp reminder.");
+      setShowAlert(true);
+      return;
+    }
+    const message = encodeURIComponent(
+      `Hello ${member.name} from ${shgName}! This is a friendly reminder for upcoming tasks or outstanding payments. Please check the SHG Manager app for details.`
+    );
+    window.open(`https://wa.me/${member.mobile}?text=${message}`, '_blank');
+  };
+    // Function to send a general WhatsApp reminder to all members with a mobile number
+  const sendGeneralWhatsAppReminder = () => {
+    let allNumbers = members.map(m => m.mobile).filter(Boolean);
+    if (allNumbers.length === 0) {
+        setAlertMessage("No members with mobile numbers to send a general WhatsApp reminder.");
+        setShowAlert(true);
+        return;
+    }
+    const numbersList = allNumbers.join(', ');
+    setAlertMessage(`Here are the mobile numbers for your SHG members:\n\n${numbersList}\n\nCopy these numbers to create a WhatsApp group or broadcast list.`);
+    setAlertCopyContent(numbersList);
+    setShowAlert(true);
+  };
+
+  return (
+    <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
+      <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300 mb-4">Welcome, {shgName}!</h2>
+      <p className="text-lg text-gray-700 dark:text-gray-300 mb-6">
+        Your SHG ID: <span className="font-mono bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-sm break-all">{shgId}</span>
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <StatCard title="Total Members" value={memberCount} icon="👥" color="bg-green-100 dark:bg-green-700 text-green-800 dark:text-green-200" />
+        <StatCard title="Current Balance" value={`₹ ${currentBalance.toFixed(2)}`} icon="💰" color="bg-yellow-100 dark:bg-yellow-700 text-yellow-800 dark:text-yellow-200" />
+        <StatCard title="Outstanding Loans" value={`₹ ${totalOutstandingLoans.toFixed(2)}`} icon="💸" color="bg-red-100 dark:bg-red-700 text-red-800 dark:text-red-200" />
+      </div>
+
+      <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Quick Actions</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <ActionButton label="View Members" icon="👉" onClick={() => setCurrentPage('members')} />
+        <ActionButton label="Record Saving" icon="💰" onClick={() => setCurrentPage('bookkeeping')} />
+        <ActionButton label="New Loan" icon="💸" onClick={() => setCurrentPage('bookkeeping')} />
+        <ActionButton label="Record Expense" icon="➖" onClick={() => setCurrentPage('bookkeeping')} />
+        <ActionButton label="View Reports" icon="📈" onClick={() => setCurrentPage('accounting')} />
+        <ActionButton label="Schedule Meeting" icon="🗓️" onClick={() => setCurrentPage('meetings')} />
+        <ActionButton label="Send General WhatsApp Reminder" icon="💬" onClick={sendGeneralWhatsAppReminder} color="bg-green-500 hover:bg-green-600" />
+      </div>
+    </div>
+  );
+};
+
+const StatCard = ({ title, value, icon, color }) => (
+  <div className={`p-5 rounded-lg shadow-md flex items-center space-x-4 ${color}`}>
+    <span className="text-4xl">{icon}</span>
+    <div>
+      <h4 className="text-sm font-medium opacity-80">{title}</h4>
+      <p className="text-2xl font-bold">{value}</p>
+    </div>
+  </div>
+);
+
+const ActionButton = ({ label, icon, onClick, color = "bg-blue-500 hover:bg-blue-600" }) => (
+  <button
+    onClick={onClick}
+    className={`flex items-center justify-center p-4 text-white rounded-lg shadow-md ${color} focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-200 ease-in-out text-lg font-semibold`}
+  >
+    <span className="mr-2 text-2xl">{icon}</span> {label}
+  </button>
+);
+
+// SHG Profile Screen Component
+const ShgProfileScreen = ({ shgName, shgLogoUrl, shgId, updateShgDetails, deleteShg, setAlertMessage, setShowAlert }) => {
+    const [editingName, setEditingName] = useState(shgName);
+    const [editingLogoUrl, setEditingLogoUrl] = useState(shgLogoUrl);
+
+    useEffect(() => {
+      setEditingName(shgName);
+      setEditingLogoUrl(shgLogoUrl);
+    }, [shgName, shgLogoUrl]);
+
+    const handleUpdate = () => {
+        updateShgDetails(editingName, editingLogoUrl);
+    };
+
+    const handleDelete = () => {
+        deleteShg();
+    };
+
+    return (
+        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
+            <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300 mb-6">SHG Profile</h2>
+
+            <div className="space-y-6">
+                {/* SHG Name */}
+                <div>
+                    <label htmlFor="shgName" className="block text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">SHG Name</label>
+                    <input
+                        type="text"
+                        id="shgName"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    />
+                </div>
+
+                {/* SHG Logo URL */}
+                <div>
+                    <label htmlFor="shgLogoUrl" className="block text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">SHG Logo URL (Optional)</label>
+                    <input
+                        type="url"
+                        id="shgLogoUrl"
+                        placeholder="e.g., https://example.com/logo.png"
+                        value={editingLogoUrl}
+                        onChange={(e) => setEditingLogoUrl(e.target.value)}
+                        className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    />
+                    {editingLogoUrl && (
+                        <div className="mt-4 flex items-center space-x-3">
+                            <img src={editingLogoUrl} alt="Current SHG Logo" className="h-16 w-16 rounded-full object-cover border border-gray-300 dark:border-gray-600"/>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">Current Logo Preview</span>
+                        </div>
+                    )}
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                        For actual file uploads, a cloud storage solution (like Firebase Storage) would be required. This field accepts a publicly accessible image URL.
+                    </p>
+                </div>
+
+                {/* SHG ID */}
+                <div>
+                    <label className="block text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">SHG ID</label>
+                    <p className="font-mono bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-md text-sm break-all">{shgId}</p>
+                </div>
+
+                <div className="flex justify-end space-x-4 pt-4">
+                    <button
+                        onClick={handleUpdate}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+                    >
+                        Save Changes
+                    </button>
+                    <button
+                        onClick={handleDelete}
+                        className="px-6 py-3 bg-red-600 text-white rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+                    >
+                        Delete SHG
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+ {
+  const activeLoans = loans.filter(loan => loan.status === 'active');
+
+  // Helper to get loan details for repayment display
+  const getLoanDetails = (loanId) => {
+    const loan = loans.find(l => l.id === loanId);
+    if (!loan) return 'Unknown Loan';
+    return `${getMemberName(loan.memberId)} - ${loan.loanType} (Principal: ₹${loan.principalAmount.toFixed(2)}, Outstanding: ₹${loan.outstandingAmount.toFixed(2)}, Interest: ${loan.interestRate}%)`;
+  };
+  // -----------------------------
+// ---- IMPORT HELPERS (place AFTER getLoanDetails and BEFORE return) ----
+const [importFileName, setImportFileName] = useState('');
+const [importPreviewRows, setImportPreviewRows] = useState([]);
+const [fullParsedRows, setFullParsedRows] = useState(null);
+const [importMapping, setImportMapping] = useState({
+  MemberId: 'MemberId',
+  Savings: 'Savings',
+  Fines: 'Fines',
+  LoanPrincipal: 'LoanPrincipal',
+  LoanInterest: 'LoanInterest',
+  BankLoanPrincipal: 'BankLoanPrincipal',
+  BankLoanInterest: 'BankLoanInterest',
+  Date: 'Date',
+  LoanId: 'LoanId',
+  BankLoanId: 'BankLoanId',
+});
+
+// parse uploaded file (Excel or CSV) using SheetJS
+const handleImportFile = async (file) => {
+  if (!file) return;
+  setImportFileName(file.name);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+    setFullParsedRows(jsonRows);
+    setImportPreviewRows(jsonRows.slice(0, 200));
+    setAlertMessage(`Parsed ${jsonRows.length} rows. Showing first ${Math.min(200, jsonRows.length)} rows for preview.`);
+    setShowAlert(true);
+  } catch (err) {
+    console.error("Import parse error", err);
+    setAlertMessage("Failed to parse file: " + (err.message || err));
+    setShowAlert(true);
+  }
+};
+
+
+// Hoisted function component — must be a declaration (hoisted) so JSX can use it safely
+function ImportPreviewTable() {
+  if (!importPreviewRows || importPreviewRows.length === 0) return null;
+  const headers = Object.keys(importPreviewRows[0] || {});
+  return (
+    <div className="mt-4">
+      <h4 className="font-semibold mb-2">Preview (first {importPreviewRows.length} rows)</h4>
+      <div className="overflow-x-auto max-h-60 border rounded p-2 bg-gray-50">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              {headers.map(h => <th key={h} className="px-2 py-1 text-left border-b">{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {importPreviewRows.map((row, i) => (
+              <tr key={i}>
+                {headers.map(h => <td key={h} className="px-2 py-1 border-b">{String(row[h]).slice(0,60)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Commit import: unified importer that handles both row-based "Type/Member/Amount" CSVs
+// and wide-format monthly sheets with Savings/Fines/LoanPrincipal/LoanInterest/BankLoanPrincipal/BankLoanInterest.
+const commitImport = async ({ useFullFile = false } = {}) => {
+  try {
+    const rows = (useFullFile && fullParsedRows) ? fullParsedRows : importPreviewRows;
+    if (!rows || rows.length === 0) {
+      setAlertMessage("No rows to import. Please parse an Excel/CSV file first.");
+      setShowAlert(true);
+      return;
+    }
+    if (!db || !userId || !shgId) {
+      setAlertMessage("App not ready: DB/user/SHG not initialized.");
+      setShowAlert(true);
+      return;
+    }
+
+    const projectId = getCurrentProjectId();
+    const txCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`);
+    let created = 0;
+    const batchPromises = [];
+
+    // helper: find member id by name (case-insensitive). If already an id, return as-is.
+    const findMemberId = (memberField) => {
+      if (!memberField) return null;
+      // if looks like an id (contains / or is short/alphanumeric), we still try match by id first
+      const byId = members.find(m => m.id === memberField);
+      if (byId) return byId.id;
+      const lower = String(memberField).trim().toLowerCase();
+      const byName = members.find(m => (m.name || '').toLowerCase() === lower);
+      if (byName) return byName.id;
+      // fallback: try partial match
+      const partial = members.find(m => (m.name || '').toLowerCase().includes(lower));
+      return partial ? partial.id : null;
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+
+      // Normalize typical fields (support both header styles)
+      const rawMember = r.Member || r['Member Name'] || r.MemberId || r['member'] || r['MEMBER'] || '';
+      const memberId = findMemberId(rawMember);
+
+      // Normalize date
+      let dateVal = new Date();
+      if (r.Date || r.date) {
+        const tryDate = new Date(r.Date || r.date);
+        if (!isNaN(tryDate)) dateVal = tryDate;
+        else {
+          // try parsing dd-mm-YYYY or other common formats by replacing - with /
+          const alt = new Date(String(r.Date || r.date).replace(/-/g, '/'));
+          if (!isNaN(alt)) dateVal = alt;
+        }
+      }
+
+      const isoDate = dateVal.toISOString();
+
+      // CASE A: Row already describes a transaction ("Type"/"Amount"/"Member" style)
+      const hasType = !!(r.Type || r.type || r['Transaction Type']);
+      if (hasType) {
+        const txType = r.Type || r.type || r['Transaction Type'];
+        const amount = parseFloat(r.Amount || r.amount || 0) || 0;
+        const txBase = {
+          date: isoDate,
+          memberId: memberId || null,
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        };
+
+        if (txType.toLowerCase().includes('saving')) {
+          if (amount > 0) {
+            const tx = { ...txBase, type: 'Saving', amount, savingType: r.SubType_Category || r['SubType_Category'] || r.Category || 'Imported' , description: r.Description || ''};
+            batchPromises.push(addDoc(txCollectionRef, tx));
+            created++;
+          }
+        } else if (txType.toLowerCase().includes('loan disbursed')) {
+          if (amount > 0) {
+            const tx = { ...txBase, type: 'Loan Disbursed', amount, loanType: r.SubType_Category || 'Book Loan', description: r.Description || '' };
+            batchPromises.push(addDoc(txCollectionRef, tx));
+            created++;
+          }
+        } else if (txType.toLowerCase().includes('repay') || txType.toLowerCase().includes('repayment')) {
+          // loan repayment row may contain Principal/Interest fields
+          const principal = parseFloat(r.PrincipalRepaid || r.principal || r.Principal || 0) || 0;
+          const interest = parseFloat(r.InterestRepaid || r.interest || r.Interest || 0) || 0;
+          const amountTotal = amount || (principal + interest);
+          if (amountTotal > 0 || principal > 0 || interest > 0) {
+            const tx = { ...txBase, type: 'Loan Repayment', amount: amountTotal, principalRepaid: principal, interestRepaid: interest, loanType: r.SubType_Category || r.loanType || 'Book', loanId: r.LoanId || null, description: r.Description || '' };
+            batchPromises.push(addDoc(txCollectionRef, tx));
+            created++;
+          }
+        } else if (txType.toLowerCase().includes('expense')) {
+          if (amount > 0) {
+            const tx = { ...txBase, type: 'Expense', amount, category: r.SubType_Category || r.Category || 'Imported', description: r.Description || '' };
+            batchPromises.push(addDoc(txCollectionRef, tx));
+            created++;
+          }
+        } else {
+          // fallback: if amount present, treat as generic transaction (Saving)
+          if (amount > 0) {
+            const tx = { ...txBase, type: 'Saving', amount, savingType: r.SubType_Category || 'Imported', description: r.Description || '' };
+            batchPromises.push(addDoc(txCollectionRef, tx));
+            created++;
+          }
+        }
+
+        // flush occasionally
+        if (batchPromises.length > 200) {
+          await Promise.all(batchPromises.splice(0, batchPromises.length));
+        }
+        continue; // move to next row
+      }
+
+      // CASE B: Wide monthly format (columns like Savings, Fines, LoanPrincipal, LoanInterest, BankLoanPrincipal, BankLoanInterest)
+      // Savings
+      const savings = parseFloat(r.Savings || r.savings || r['Total Savings'] || 0) || 0;
+      if (savings > 0) {
+        batchPromises.push(addDoc(txCollectionRef, {
+          type: 'Saving',
+          memberId: memberId || null,
+          amount: savings,
+          date: isoDate,
+          savingType: 'Imported',
+          description: 'Imported savings from sheet',
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        }));
+        created++;
+      }
+
+      // Fines
+      const fines = parseFloat(r.Fines || r.fines || r.Fine || 0) || 0;
+      if (fines > 0) {
+        batchPromises.push(addDoc(txCollectionRef, {
+          type: 'Fine',
+          memberId: memberId || null,
+          amount: fines,
+          date: isoDate,
+          description: 'Imported fine',
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        }));
+        created++;
+      }
+
+      // Book loan principal / interest = repayment
+      const loanP = parseFloat(r.LoanPrincipal || r.loanPrincipal || r['Internal Loan Principal'] || 0) || 0;
+      const loanI = parseFloat(r.LoanInterest || r.loanInterest || r['Internal Loan Interest'] || 0) || 0;
+      if (loanP > 0 || loanI > 0) {
+        batchPromises.push(addDoc(txCollectionRef, {
+          type: 'Loan Repayment',
+          memberId: memberId || null,
+          amount: loanP + loanI,
+          principalRepaid: loanP,
+          interestRepaid: loanI,
+          date: isoDate,
+          description: 'Imported internal loan repayment',
+          loanType: 'Book',
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        }));
+        created++;
+      }
+
+      // Bank loan principal / interest = repayment
+      const bankP = parseFloat(r.BankLoanPrincipal || r.bankLoanPrincipal || r['Bank Loan Principal'] || 0) || 0;
+      const bankI = parseFloat(r.BankLoanInterest || r.bankLoanInterest || r['Bank Loan Interest'] || 0) || 0;
+      if (bankP > 0 || bankI > 0) {
+        batchPromises.push(addDoc(txCollectionRef, {
+          type: 'Bank Loan Repayment',
+          memberId: memberId || null,
+          amount: bankP + bankI,
+          principalRepaid: bankP,
+          interestRepaid: bankI,
+          date: isoDate,
+          description: 'Imported bank loan repayment',
+          loanType: 'Bank',
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        }));
+        created++;
+      }
+
+      // Other Expense (some sheets have "OtherExpense" / "Expense")
+      const otherExpense = parseFloat(r.OtherExpense || r.Expense || 0) || 0;
+      if (otherExpense > 0) {
+        batchPromises.push(addDoc(txCollectionRef, {
+          type: 'Expense',
+          memberId: memberId || null,
+          amount: otherExpense,
+          date: isoDate,
+          description: 'Imported expense',
+          recordedBy: userId,
+          createdAt: serverTimestamp(),
+        }));
+        created++;
+      }
+
+      // flush periodically
+      if (batchPromises.length > 200) {
+        await Promise.all(batchPromises.splice(0, batchPromises.length));
+      }
+    } // end rows loop
+
+    // final flush
+    if (batchPromises.length > 0) {
+      await Promise.all(batchPromises.splice(0, batchPromises.length));
+    }
+
+    setAlertMessage(`Import finished. Created ${created} transaction(s).`);
+    setShowAlert(true);
+    // cleanup preview and parsed storage
+    setImportPreviewRows([]);
+    setFullParsedRows(null);
+    setImportFileName('');
+  } catch (err) {
+    console.error("commitImport error:", err);
+    setAlertMessage("Import failed: " + (err.message || err));
+    setShowAlert(true);
+  }
+};
+
+// Accounting Screen Component
+const AccountingScreen = ({ transactions, loans, members, getMemberName, currentBalance, totalOutstandingLoans, setAlertMessage, setShowAlert, db, userId, shgId, getCurrentProjectId }) => {
+
+  const generateCsv = (data, filename) => {
+    const csvRows = [];
+    if (data.length === 0) {
+        setAlertMessage("No data to export.");
+        setShowAlert(true);
+        return;
+    }
+    const headers = Object.keys(data[0]);
+    csvRows.push(headers.join(','));
+
+    for (const row of data) {
+      const values = headers.map(header => {
+        const value = row[header];
+        // Handle potential Firestore Timestamp objects
+        const escaped = ('' + (value?.toDate ? value.toDate().toLocaleString() : value)).replace(/"/g, '""');
+        return `"${escaped}"`;
+      });
+      csvRows.push(values.join(','));
+    }
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportMembersToCsv = () => {
+    const memberDataForCsv = members.map(member => ({
+      ID: member.id,
+      Name: member.name,
+      Mobile: member.mobile || 'N/A',
+      Email: member.email || 'N/A',
+      JoiningDate: new Date(member.joiningDate).toLocaleDateString(),
+      Designation: member.designation,
+      AddedBy: member.addedBy,
+      // Handle potential Firestore Timestamp for createdAt
+      CreatedAt: member.createdAt?.toDate ? member.createdAt.toDate().toLocaleString() : member.createdAt || 'N/A',
+    }));
+    generateCsv(memberDataForCsv, 'shg_members.csv');
+  };
+
+  const exportTransactionsToCsv = () => {
+    const transactionDataForCsv = transactions.map(transaction => ({
+      ID: transaction.id,
+      Date: new Date(transaction.date).toLocaleDateString(),
+      Type: transaction.type,
+      SubType_Category: transaction.savingType || transaction.loanType || transaction.category || 'N/A',
+      Member: transaction.memberId ? getMemberName(transaction.memberId) : 'N/A',
+      Amount: transaction.amount.toFixed(2),
+      PrincipalRepaid: transaction.principalRepaid ? transaction.principalRepaid.toFixed(2) : 'N/A',
+      InterestRepaid: transaction.interestRepaid ? transaction.interestRepaid.toFixed(2) : 'N/A',
+      Description: transaction.description || 'N/A',
+      RecordedBy: transaction.recordedBy,
+      // Handle potential Firestore Timestamp for createdAt
+      CreatedAt: transaction.createdAt?.toDate ? transaction.createdAt.toDate().toLocaleString() : transaction.createdAt || 'N/A',
+    }));
+    generateCsv(transactionDataForCsv, 'shg_transactions.csv');
+  };
+
+  const handleImportMembersCsv = async (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+        setAlertMessage("Please select a CSV file to import.");
+        setShowAlert(true);
+        return;
+    }
+
+    if (file.type !== "text/csv") {
+        setAlertMessage("Invalid file type. Please upload a CSV file.");
+        setShowAlert(true);
+        return;
+    }
+
+    setAlertMessage("Importing members... Please wait.");
+    setShowAlert(true);
+    // You might want a separate loading state for import to prevent other actions
+    // setLoading(true); // If you have a global loading state
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const text = e.target.result;
+        try {
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            if (lines.length < 2) {
+                setAlertMessage("CSV file is empty or contains only headers.");
+                setShowAlert(true);
+                // setLoading(false);
+                return;
+            }
+
+            const headers = lines[0].split(',').map(h => h.trim());
+            const membersToImport = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim());
+                if (values.length !== headers.length) {
+                    setAlertMessage(`Skipping row ${i + 1}: Mismatched column count or malformed row.`);
+                    setShowAlert(true);
+                    continue;
+                }
+
+                const memberData = {};
+                headers.forEach((header, index) => {
+                    // Simple mapping, might need more complex logic for various CSV formats
+                    switch (header.toLowerCase()) {
+                        case 'name': memberData.name = values[index]; break;
+                        case 'mobile': memberData.mobile = values[index]; break;
+                        case 'email': memberData.email = values[index]; break;
+                        case 'joiningdate': memberData.joiningDate = values[index]; break;
+                        case 'designation': memberData.designation = values[index]; break;
+                        // Add other fields as necessary based on your member schema
+                        default: break;
+                    }
+                });
+
+                // Basic validation
+                if (!memberData.name || !memberData.mobile) {
+                    setAlertMessage(`Skipping row ${i + 1}: Missing required fields (Name or Mobile).`);
+                    setShowAlert(true);
+                    continue;
+                }
+                // Ensure joiningDate is in YYYY-MM-DD format, default to today if missing or invalid
+                if (!memberData.joiningDate || isNaN(new Date(memberData.joiningDate))) {
+                    memberData.joiningDate = new Date().toISOString().split('T')[0];
+                }
+
+                membersToImport.push({
+                    ...memberData,
+                    createdAt: serverTimestamp(), // Use serverTimestamp for server-generated timestamp
+                    addedBy: userId,
+                    updatedAt: serverTimestamp(),
+                    designation: memberData.designation || 'member', // Default designation if not provided
+                });
+            }
+
+            if (membersToImport.length > 0) {
+                const projectId = getCurrentProjectId(); 
+                const memberCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`);
+                
+                await Promise.all(membersToImport.map(async (member) => {
+                    await addDoc(memberCollectionRef, member);
+                }));
+                setAlertMessage(`Successfully imported ${membersToImport.length} members!`);
+                setShowAlert(true);
+            } else {
+                setAlertMessage("No valid members found in the CSV to import.");
+                setShowAlert(true);
+            }
+
+        } catch (parseError) {
+            console.error("Error parsing CSV:", parseError);
+            setAlertMessage(`Error parsing CSV file: ${parseError.message}`);
+            setShowAlert(true);
+        } finally {
+            // setLoading(false); // If you have a global loading state
+            event.target.value = null; // Clear the file input to allow re-uploading same file
+        }
+    };
+    reader.onerror = () => {
+        setAlertMessage("Failed to read file.");
+        setShowAlert(true);
+        // setLoading(false);
+    };
+    reader.readAsText(file);
+  };
+
+  // --- Reports and Chart Data Generation ---
+
+  // Monthly Savings/Expenses (for a simple chart or report)
+  const getMonthlySummary = (transactions) => {
+    const monthlyData = {};
+    transactions.forEach(t => {
+      const date = new Date(t.date);
+      const yearMonth = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+      if (!monthlyData[yearMonth]) {
+        monthlyData[yearMonth] = { savings: 0, expenses: 0, loansDisbursed: 0, loanRepaid: 0 };
+      }
+
+      if (t.type === 'Saving') monthlyData[yearMonth].savings += t.amount;
+      if (t.type === 'Expense') monthlyData[yearMonth].expenses += t.amount;
+      if (t.type === 'Loan Disbursed') monthlyData[yearMonth].loansDisbursed += t.amount;
+      if (t.type === 'Loan Repayment') monthlyData[yearMonth].loanRepaid += t.amount;
+    });
+    return monthlyData;
+  };
+
+  const monthlySummary = getMonthlySummary(transactions);
+  const sortedMonths = Object.keys(monthlySummary).sort();
+
+  // Member-wise summary
+  const getMemberSummary = (members, transactions, loans) => {
+    const summary = {};
+    members.forEach(m => {
+      summary[m.id] = {
+        name: m.name,
+        totalSavings: 0,
+        totalLoansDisbursed: 0,
+        totalLoanRepaid: 0,
+        currentOutstanding: 0
+      };
+    });
+
+    transactions.forEach(t => {
+      if (t.memberId && summary[t.memberId]) {
+        if (t.type === 'Saving') summary[t.memberId].totalSavings += t.amount;
+        if (t.type === 'Loan Disbursed') summary[t.memberId].totalLoansDisbursed += t.amount;
+        if (t.type === 'Loan Repayment') summary[t.memberId].totalLoanRepaid += t.amount;
+      }
+    });
+
+    loans.forEach(l => {
+      if (summary[l.memberId]) {
+        summary[l.memberId].currentOutstanding += l.outstandingAmount;
+      }
+    });
+
+    return Object.values(summary);
+  };
+
+  const memberSummary = getMemberSummary(members, transactions, loans);
+
+
+  return (
+    <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
+      <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300 mb-6">Accounting & Reports</h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <StatCard title="Total Current Balance" value={`₹ ${currentBalance.toFixed(2)}`} icon="💰" color="bg-green-100 dark:bg-green-700 text-green-800 dark:text-green-200" />
+        <StatCard title="Total Outstanding Loans" value={`₹ ${totalOutstandingLoans.toFixed(2)}`} icon="💸" color="bg-red-100 dark:bg-red-700 text-red-800 dark:text-red-200" />
+      </div>
+
+      {/* Monthly Summary Report (Textual) */}
+      <div className="p-6 bg-blue-50 dark:bg-blue-950 rounded-lg shadow-md mb-8">
+        <h3 className="text-2xl font-semibold text-blue-700 dark:text-blue-200 mb-4">Monthly Financial Summary</h3>
+        {sortedMonths.length === 0 ? (
+          <p className="text-center text-gray-600 dark:text-gray-400 py-4">No monthly data available.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-blue-200 dark:divide-blue-700">
+              <thead className="bg-blue-100 dark:bg-blue-800"><tr>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-blue-500 dark:text-blue-300 uppercase tracking-wider">Month</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-blue-500 dark:text-blue-300 uppercase tracking-wider">Savings (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-blue-500 dark:text-blue-300 uppercase tracking-wider">Expenses (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-blue-500 dark:text-blue-300 uppercase tracking-wider">Loans Disbursed (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-blue-500 dark:text-blue-300 uppercase tracking-wider">Loans Repaid (₹)</th>
+              </tr></thead>
+              <tbody className="bg-white dark:bg-blue-900 divide-y divide-blue-200 dark:divide-blue-700">
+                {sortedMonths.map(month => (
+                  <tr key={month} className="hover:bg-blue-50 dark:hover:bg-blue-800">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{month}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 dark:text-green-400">₹ {monthlySummary[month].savings.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">₹ {monthlySummary[month].expenses.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">₹ {monthlySummary[month].loansDisbursed.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 dark:text-green-400">₹ {monthlySummary[month].loanRepaid.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Member-wise Summary Report (Textual) */}
+      <div className="p-6 bg-purple-50 dark:bg-purple-950 rounded-lg shadow-md mb-8">
+        <h3 className="text-2xl font-semibold text-purple-700 dark:text-purple-200 mb-4">Member Financial Overview</h3>
+        {memberSummary.length === 0 ? (
+          <p className="text-center text-gray-600 dark:text-gray-400 py-4">No member data available for summary.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-purple-200 dark:divide-purple-700">
+              <thead className="bg-purple-100 dark:bg-purple-800"><tr>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-purple-500 dark:text-purple-300 uppercase tracking-wider">Member Name</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-purple-500 dark:text-purple-300 uppercase tracking-wider">Total Savings (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-purple-500 dark:text-purple-300 uppercase tracking-wider">Total Loans Disbursed (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-purple-500 dark:text-purple-300 uppercase tracking-wider">Total Loans Repaid (₹)</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-purple-500 dark:text-purple-300 uppercase tracking-wider">Current Outstanding (₹)</th>
+              </tr></thead>
+              <tbody className="bg-white dark:bg-purple-900 divide-y divide-purple-200 dark:divide-purple-700">
+                {memberSummary.map(m => (
+                  <tr key={m.name} className="hover:bg-purple-50 dark:hover:bg-purple-800">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{m.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 dark:text-green-400">₹ {m.totalSavings.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">₹ {m.totalLoansDisbursed.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 dark:text-green-400">₹ {m.totalLoanRepaid.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">₹ {m.currentOutstanding.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Transaction History Report */}
+      <div className="p-6 bg-gray-50 dark:bg-gray-700 rounded-lg shadow-md mb-8">
+        <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Transaction History</h3>
+        {transactions.length === 0 ? (
+          <p className="text-center text-gray-600 dark:text-gray-400 py-4">No transactions to display.</p>
+        ) : (
+            <div className="overflow-x-auto mb-4">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-600 rounded-lg">
+              <thead className="bg-gray-100 dark:bg-gray-800"><tr>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Date</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Sub-Type/Category</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Member</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Amount (₹)</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+                </tr></thead>
+              <tbody className="bg-white dark:bg-gray-700 divide-y divide-gray-200 dark:divide-gray-600">
+                {transactions.map(t => (
+                  <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{new Date(t.date).toLocaleDateString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{t.type}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{t.savingType || t.loanType || t.category || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{t.memberId ? getMemberName(t.memberId) : 'N/A'}</td>
+                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold ${
+                        t.type === 'Saving' || t.type === 'Loan Repayment' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                    }`}>
+                      {t.type === 'Loan Disbursed' || t.type === 'Expense' ? '-' : ''}₹ {t.amount.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{t.description || 'N/A'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+        )}
+        <div className="flex justify-end space-x-3 mt-4">
+          <button
+            onClick={exportTransactionsToCsv}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+          >
+            Export Transactions to CSV
+          </button>
+        </div>
+      </div>
+
+      {/* Member Data Export/Import */}
+      <div className="p-6 bg-gray-50 dark:bg-gray-700 rounded-lg shadow-md mb-8">
+        <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Member Data</h3>
+        <p className="text-gray-700 dark:text-gray-300 mb-4">
+            Manage your SHG member details. You can export existing member data or import new members from a CSV file.
+            <br/>
+            **CSV Format for Import:** Ensure your CSV file has headers like `Name`, `Mobile`, `Email`, `JoiningDate` (YYYY-MM-DD), `Designation`.
+            `Name` and `Mobile` are required.
+        </p>
+        <div className="flex justify-end space-x-3 mt-4">
+          <button
+            onClick={exportMembersToCsv}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+          >
+            Export Members to CSV
+          </button>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleImportMembersCsv}
+            className="hidden"
+            id="importMembersCsv"
+          />
+          <label htmlFor="importMembersCsv"
+            className="px-6 py-3 bg-gray-600 text-white rounded-lg shadow-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold cursor-pointer"
+          >
+            Import Members from CSV
+          </label>
+        </div>
+      </div>
+
+
+      {/* Basic Chart Placeholder */}
+      <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md mt-8">
+          <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Financial Trends Overview</h3>
+          <p className="text-gray-700 dark:text-gray-300 mb-4">
+              A visual chart showcasing monthly financial activities (e.g., savings, expenses, loan disbursements, and repayments) would appear here.
+              Integrating a charting library like Recharts would allow for dynamic and interactive data visualization.
+              <br/><br/>
+              **Example:** A bar chart with "Month" on the X-axis and "Amount (₹)" on the Y-axis, showing separate bars for total savings and total expenses each month.
+              
+          </p>
+          <div className="h-64 bg-gray-100 dark:bg-gray-700 rounded-md flex items-center justify-center text-gray-500 dark:text-gray-400 italic">
+              Chart Placeholder (e.g., Monthly Savings vs. Expenses)
+          </div>
+      </div>
+
+    </div>
+  );
+};
+
+// Meetings Screen Component
+const MeetingsScreen = ({
+  members,
+  meetings,
+  meetingDate,
+  setMeetingDate,
+  meetingAgenda,
+  setMeetingAgenda,
+  meetingMinutes,
+  setMeetingMinutes,
+  selectedMeetingAttendees,
+  setSelectedMeetingAttendees,
+  recordMeeting,
+  getMemberName,
+}) => {
+    const handleAttendeeToggle = (memberId) => {
+        setSelectedMeetingAttendees(prev =>
+            prev.includes(memberId)
+                ? prev.filter(id => id !== memberId)
+                : [...prev, memberId]
+        );
+    };
+
+  return (
+    <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
+      <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300 mb-6">Meetings Management</h2>
+
+      {/* Schedule New Meeting Section */}
+      <div className="mb-8 p-6 bg-yellow-50 dark:bg-yellow-950 rounded-lg shadow-md">
+        <h3 className="text-2xl font-semibold text-yellow-700 dark:text-yellow-200 mb-4">Schedule New Meeting</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <input
+            type="date"
+            value={meetingDate}
+            onChange={(e) => setMeetingDate(e.target.value)}
+            className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-yellow-500 focus:border-yellow-500 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+          />
+          <input
+            type="text"
+            placeholder="Meeting Agenda"
+            value={meetingAgenda}
+            onChange={(e) => setMeetingAgenda(e.target.value)}
+            className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-yellow-500 focus:border-yellow-500 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+          />
+        </div>
+        <textarea
+          placeholder="Meeting Minutes (Optional)"
+          value={meetingMinutes}
+          onChange={(e) => setMeetingMinutes(e.target.value)}
+          rows="4"
+          className="w-full p-3 mb-4 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-yellow-500 focus:border-yellow-500 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+        ></textarea>
+
+        <h4 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-2">Attendees:</h4>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
+            {members.map(member => (
+                <label key={member.id} className="inline-flex items-center">
+                    <input
+                        type="checkbox"
+                        value={member.id}
+                        checked={selectedMeetingAttendees.includes(member.id)}
+                        onChange={() => handleAttendeeToggle(member.id)}
+                        className="form-checkbox h-5 w-5 text-yellow-600 rounded focus:ring-yellow-500 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <span className="ml-2 text-gray-700 dark:text-gray-300">{member.name}</span>
+                </label>
+            ))}
+        </div>
+
+        <button
+          onClick={recordMeeting}
+          className="w-full px-6 py-3 bg-yellow-600 text-white rounded-lg shadow-md hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-75 transition duration-200 ease-in-out text-lg font-semibold"
+        >
+          Record Meeting
+        </button>
+      </div>
+
+      {/* Past Meetings Section */}
+      <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md mt-8">
+        <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Past Meetings</h3>
+        {meetings.length === 0 ? (
+          <p className="text-center text-gray-600 dark:text-gray-400 py-4">No meetings recorded yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {meetings.map((meeting) => (
+              <div key={meeting.id} className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg shadow-sm">
+                <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
+                  🗓️ {new Date(meeting.date).toLocaleDateString()} - {meeting.agenda}
+                </p>
+                {meeting.minutes && (
+                    <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                        <span className="font-medium">Minutes:</span> {meeting.minutes}
+                    </p>
+                )}
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                    <span className="font-medium">Attendees:</span>{' '}
+                    {meeting.attendees.map(id => getMemberName(id)).join(', ') || 'N/A'}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Multi-User Access Information Component
+const MultiUserAccessInfo = () => {
+  return (
+    <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
+      <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300 mb-6">Multi-User Access & Security</h2>
+
+      <div className="space-y-4 text-gray-700 dark:text-gray-300">
+        <p>
+          The current SHG Manager application is designed for **single-user access** using anonymous or custom token authentication provided by the environment. This means each instance of the app operates independently for one user.
+        </p>
+        <p>
+          Implementing **multi-user access with password creation, forgot password functionality, and distinct user roles** is a complex feature that requires a full-fledged backend authentication system. Here's what would typically be involved:
+        </p>
+        <ul className="list-disc list-inside space-y-2 ml-4">
+          <li>
+            **Firebase Authentication:** Integrating Firebase Authentication (e.g., Email/Password, Google Sign-In) to manage user accounts.
+          </li>
+          <li>
+            **User Data Storage:** Storing user-specific profiles and roles in Firestore.
+          </li>
+          <li>
+            **Password Management:** Implementing secure password hashing, reset flows (using Firebase's built-in email-based password reset), and account recovery.
+          </li>
+          <li>
+            **Role-Based Access Control (RBAC):** Defining different roles (e.g., Admin, Treasurer, Member) and setting up robust **Firestore Security Rules** to control read/write permissions based on these roles. For example, a "Treasurer" might have write access to transactions, while a "Member" only has read access to their own data.
+          </li>
+          <li>
+            **UI for User Management:** Building screens for user registration, login, password reset, and potentially an admin panel to manage user roles and permissions.
+          </li>
+          <li>
+            **Server-Side Logic (for advanced cases):** Some complex authentication flows or integrations might benefit from server-side (e.g., Cloud Functions) logic.
+          </li>
+        </ul>
+        <p className="font-semibold text-yellow-700 dark:text-yellow-300">
+          Due to the extensive backend and security implications, this full multi-user authentication system is beyond the scope of this client-side demo application. It would fundamentally change the architecture and security model.
+        </p>
+        <p>
+          If you need this functionality, consider developing a full-stack application that leverages Firebase Authentication and custom security rules for a robust solution.
+        </p>
+      </div>
+    </div>
+  );
+};
+ }
+export default App;
