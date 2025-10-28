@@ -1684,12 +1684,6 @@ const DashboardScreen = ({
           icon="🗓️"
           onClick={() => setCurrentPage("meetings")}
         />
-        <ActionButton
-          label="Send General WhatsApp Reminder"
-          icon="💬"
-          onClick={sendGeneralWhatsAppReminder}
-          color="bg-green-500 hover:bg-green-600"
-        />
       </div>
     </div>
   );
