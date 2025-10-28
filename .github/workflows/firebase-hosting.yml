@@ -1,19 +1,34 @@
-name: Deploy to Firebase Hosting on push
+name: Deploy to Firebase Hosting
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
       - run: npm ci && npm run build
+
+      # 🔹 Auto-deploy for main branch
       - uses: FirebaseExtended/action-hosting-deploy@v0
+        if: github.event_name == 'push'
         with:
           repoToken: "${{ secrets.GITHUB_TOKEN }}"
           firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHG_BOOKKEEPING_APP }}"
           channelId: live
+          projectId: shg-bookkeeping-app
+
+      # 🔹 Auto-deploy preview URLs for PRs
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        if: github.event_name == 'pull_request'
+        with:
+          repoToken: "${{ secrets.GITHUB_TOKEN }}"
+          firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHG_BOOKKEEPING_APP }}"
           projectId: shg-bookkeeping-app
