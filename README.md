@@ -1,2 +1,2 @@
 # shg-bookkeeping-app
-Kudradi SHG-123
+Kudradi SHG
