@@ -1,6 +1,6 @@
 {
   "name": "shg-bookkeeping-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -20,16 +20,18 @@
     "web-vitals": "^2.1.4",
     "xlsx": "^0.18.5"
   },
-"scripts": {
-  "tw-init": "tailwindcss init -p",
-  "start": "react-scripts start",
-  "build": "react-scripts build || echo 'Build completed with warnings'",
-  "test": "react-scripts test",
-  "eject": "react-scripts eject",
-  "auto": "git add . && git commit -m \"upd\" && git push",
-  "auto-deploy": "git add . && git commit -m \"upd\" && git push && react-scripts build && firebase deploy"
-},
-
+  "scripts": {
+    "tw-init": "tailwindcss init -p",
+    "start": "react-scripts start",
+    "build": "react-scripts build || echo 'Build completed with warnings'",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "auto": "git add . && git commit -m \"upd\" && git push",
+    "bump": "node version-bump.js",
+    "ding": "node ding.js",
+    "backup": "node backup-firestore.js",
+    "pro-deploy": "npm run bump && git add . && git commit -m \"deploy\" && git push && npm run build && firebase deploy && npm run ding"
+  },
   "eslintConfig": {
     "extends": [
       "react-app",
