@@ -1636,7 +1636,7 @@ const DashboardScreen = ({
   </div>
 
   <div className="rounded-lg shadow-sm p-3 bg-purple-50 dark:bg-purple-900/20">
-    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">💳 OD Account Balance</h4>
+    <h4 className="text-lg font-medium text-gray-700 dark:text-gray-300">💳 OD Account Balance</h4>
     <p className="text-2xl font-bold text-purple-600 dark:text-purple-300 mt-1">
       ₹{formatINR(odBalance)}
     </p>
