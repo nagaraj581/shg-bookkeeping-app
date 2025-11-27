@@ -26,7 +26,8 @@
   "build": "react-scripts build || echo 'Build completed with warnings'",
   "test": "react-scripts test",
   "eject": "react-scripts eject",
-  "auto": "git add . && git commit -m \"upd\" && git push"
+  "auto": "git add . && git commit -m \"upd\" && git push",
+  "auto-deploy": "git add . && git commit -m \"upd\" && git push && firebase deploy"
 },
   "eslintConfig": {
     "extends": [
