@@ -1629,14 +1629,14 @@ const DashboardScreen = ({
 {/* Account balances - compact */}
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
   <div className="rounded-lg shadow-sm p-3 bg-blue-50 dark:bg-blue-900/20">
-    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">🏦 SB Account</h4>
+    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">🏦 SB Account Balance</h4>
     <p className="text-2xl font-bold text-blue-600 dark:text-blue-300 mt-1">
       ₹{formatINR(sbBalance)}
     </p>
   </div>
 
   <div className="rounded-lg shadow-sm p-3 bg-purple-50 dark:bg-purple-900/20">
-    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">💳 OD Account</h4>
+    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">💳 OD Account Balance</h4>
     <p className="text-2xl font-bold text-purple-600 dark:text-purple-300 mt-1">
       ₹{formatINR(odBalance)}
     </p>

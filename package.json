@@ -20,13 +20,14 @@
     "web-vitals": "^2.1.4",
     "xlsx": "^0.18.5"
   },
-  "scripts": {
-    "tw-init": "tailwindcss init -p",
-    "start": "react-scripts start",
-"build": "react-scripts build || echo 'Build completed with warnings'",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
+"scripts": {
+  "tw-init": "tailwindcss init -p",
+  "start": "react-scripts start",
+  "build": "react-scripts build || echo 'Build completed with warnings'",
+  "test": "react-scripts test",
+  "eject": "react-scripts eject",
+  "auto": "git add . && git commit -m \"upd\" && git push"
+},
   "eslintConfig": {
     "extends": [
       "react-app",
