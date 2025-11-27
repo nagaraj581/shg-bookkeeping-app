@@ -27,8 +27,9 @@
   "test": "react-scripts test",
   "eject": "react-scripts eject",
   "auto": "git add . && git commit -m \"upd\" && git push",
-  "auto-deploy": "git add . && git commit -m \"upd\" && git push && firebase deploy"
+  "auto-deploy": "git add . && git commit -m \"upd\" && git push && react-scripts build && firebase deploy"
 },
+
   "eslintConfig": {
     "extends": [
       "react-app",
