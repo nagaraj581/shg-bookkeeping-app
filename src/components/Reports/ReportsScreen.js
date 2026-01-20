@@ -8,6 +8,69 @@ const formatINR = (num) => {
   return n.toLocaleString("en-IN");
 };
 
+const getMissedPaymentSummary = (members, transactions, loans, year) => {
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const result = [];
+
+  const yearTx = transactions.filter(
+    t => new Date(t.date).getFullYear() === year
+  );
+
+  members.forEach(member => {
+    const memberTx = yearTx.filter(t => t.memberId === member.id);
+
+    const savingsPaid = new Set();
+    const principalPaid = new Set();
+    const interestPaid = new Set();
+
+    memberTx.forEach(tx => {
+      const m = new Date(tx.date).getMonth();
+
+      if (tx.type === "Saving") {
+        savingsPaid.add(m);
+      }
+
+      if (tx.type === "Loan Repayment") {
+        if (Number(tx.principalRepaid) > 0) principalPaid.add(m);
+        if (Number(tx.interestRepaid) > 0) interestPaid.add(m);
+      }
+    });
+
+    const hasLoan = loans.some(
+      l => l.memberId === member.id && l.status === "active"
+    );
+
+    const missedSavings = [];
+    const missedPrincipal = [];
+    const missedInterest = [];
+
+    for (let i = 0; i < 12; i++) {
+      if (!savingsPaid.has(i)) missedSavings.push(months[i]);
+
+      if (hasLoan) {
+        if (!principalPaid.has(i)) missedPrincipal.push(months[i]);
+        if (!interestPaid.has(i)) missedInterest.push(months[i]);
+      }
+    }
+
+    if (
+      missedSavings.length ||
+      missedPrincipal.length ||
+      missedInterest.length
+    ) {
+      result.push({
+        name: member.name,
+        savings: missedSavings,
+        principal: missedPrincipal,
+        interest: missedInterest,
+      });
+    }
+  });
+
+  return result;
+};
+
 
 export default function ReportsScreen({
   members = [],

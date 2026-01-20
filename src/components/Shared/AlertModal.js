@@ -76,7 +76,7 @@ const AlertModal = ({
               disabled={busy}
               className="px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-75 transition duration-200 ease-in-out disabled:opacity-50 flex items-center gap-2"
             >
-              📋 Copy Numbers
+              📋 Copy Message
             </button>
           )}
 

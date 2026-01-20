@@ -15,6 +15,8 @@ import TransactionForm from "./components/TransactionForm";
 import { uploadBytesResumable} from "firebase/storage";
 import { doc, updateDoc } from "firebase/firestore";
 import { storage, db } from "./firebase";
+import CreateReminderModal from "./components/Reminders/CreateReminderModal";
+
 
 
 
@@ -85,6 +87,9 @@ const App = () => {
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const formatName = (name = "") =>
+    name.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  
 
   
 
@@ -113,6 +118,7 @@ const App = () => {
   const [showLoginScreen, setShowLoginScreen] = useState(false);
   // WhatsApp Reminder Modal states
 const [showReminderModal, setShowReminderModal] = useState(false);
+
 const [reminderMessage, setReminderMessage] = useState(
   localStorage.getItem("lastReminderMessage") || ""
 );
@@ -121,6 +127,17 @@ useEffect(() => {
     localStorage.setItem("lastReminderMessage", reminderMessage);
   }
 }, [reminderMessage]);
+// 🔔 Create Reminder (member-specific)
+const [showCreateReminderModal, setShowCreateReminderModal] = useState(false);
+const [reminderLanguage, setReminderLanguage] = useState("en");
+const [reminderMemberId, setReminderMemberId] = useState("");
+const [reminderSaving, setReminderSaving] = useState(500); // default monthly saving
+const [reminderFine, setReminderFine] = useState("");
+const [reminderInterest, setReminderInterest] = useState("");
+const [reminderDueDate, setReminderDueDate] = useState(
+  new Date().toISOString().split("T")[0]
+);
+
 
  
 
@@ -233,6 +250,47 @@ const handleSignOut = async () => {
   }
 };
 
+const formatDateDMY = (isoDate) => {
+  if (!isoDate) return "";
+  const d = new Date(isoDate);
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).replace(/ /g, "-");
+};
+
+const handleGenerateReminder = () => {
+  if (!reminderMemberId) {
+    setAlertMessage("Please select a member.");
+    setShowAlert(true);
+    return;
+  }
+
+  const member = members.find((m) => m.id === reminderMemberId);
+  if (!member) return;
+
+  const payload = {
+    memberName: formatName(member.name),
+    outstandingLoan: getOutstandingLoanForMember(reminderMemberId),
+    interest: reminderInterest,
+    saving: reminderSaving,
+    fine: reminderFine,
+    dueDate: formatDateDMY(reminderDueDate),
+  };
+  
+
+  const message =
+    reminderLanguage === "kn"
+      ? generateReminderMessageKN(payload)
+      : generateReminderMessageEN(payload);
+
+  setReminderMessage(message);
+  setShowCreateReminderModal(false);
+  setShowReminderModal(true);
+};
+
+
 
   // Helper function to get member name by ID
   const getMemberName = (memberId) => {
@@ -320,6 +378,62 @@ const exportTransactionsToXlsx = () => {
     setShowAlert(true);
   }
 };
+
+const getOutstandingLoanForMember = (memberId) => {
+  if (!memberId) return 0;
+
+  return loans
+    .filter(
+      (loan) =>
+        loan.memberId === memberId &&
+        loan.status !== "closed"
+    )
+    .reduce((sum, loan) => sum + (loan.outstandingAmount || 0), 0);
+};
+
+const generateReminderMessageEN = ({
+  memberName,
+  outstandingLoan,
+  interest,
+  saving,
+  fine,
+  dueDate,
+}) => {
+  return `Dear ${memberName},
+
+Your outstanding loan amount is ₹${outstandingLoan}.
+
+Interest: ₹${interest || 0}  
+Monthly saving: ₹${saving}  
+Fine: ₹${fine || 0}  
+
+Please pay the above amount before the due date of ${dueDate}.
+
+Thank you,
+SHG Management`;
+};
+
+
+const generateReminderMessageKN = ({
+  memberName,
+  outstandingLoan,
+  interest,
+  saving,
+  fine,
+  dueDate,
+}) => {
+  return `ಪ್ರಿಯ ${memberName},
+
+ನಿಮ್ಮ ಬಾಕಿ ಸಾಲ ಮೊತ್ತ ₹${outstandingLoan}.
+ಬಡ್ಡಿ: ₹${interest || 0}.
+ಮಾಸಿಕ ಉಳಿತಾಯ: ₹${saving}.
+ದಂಡ: ₹${fine || 0}.
+
+ದಯವಿಟ್ಟು ${dueDate} ರೊಳಗಾಗಿ ಮೇಲ್ಕಂಡ ಮೊತ್ತವನ್ನು ಪಾವತಿಸಿ.
+
+ಧನ್ಯವಾದಗಳು.`;
+};
+
 
   // Initialize Firebase and handle authentication
 useEffect(() => {
@@ -1097,17 +1211,15 @@ const sendGeneralWhatsAppReminder = () => {
   setShowReminderModal(true);
 };
 
-// Copy all numbers to clipboard
-const handleCopyNumbers = () => {
-  const allNumbers = members.map(m => m.mobile).filter(Boolean);
-  if (allNumbers.length === 0) return;
+const handleCopyMessage = () => {
+  if (!reminderMessage.trim()) return;
 
-  const numbersList = allNumbers.join(", ");
-  navigator.clipboard.writeText(numbersList);
+  navigator.clipboard.writeText(reminderMessage);
   setShowReminderModal(false);
-  setAlertMessage("✅ All member numbers copied to clipboard!");
+  setAlertMessage("✅ Reminder message copied to clipboard!");
   setShowAlert(true);
 };
+
 
 // Send via WhatsApp with prefilled message
 const handleSendWhatsApp = () => {
@@ -1293,26 +1405,25 @@ return (
   className="flex-1 p-4 md:p-6 overflow-auto"
   style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}
 >
-          {currentPage === "dashboard" && (
-            <DashboardScreen
-              shgName={shgName}
-              shgId={shgId}
-              memberCount={members.length}
-              currentBalance={currentBalance}
-              totalOutstandingLoans={totalOutstandingLoans}
-              setCurrentPage={setCurrentPage}
-              members={members}
-              getMemberMobile={getMemberMobile}
-              setAlertMessage={setAlertMessage}
-              setShowAlert={setShowAlert}
-              setAlertCopyContent={setAlertCopyContent}
-              setConfirmAction={setConfirmAction}
-              sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
-              sbBalance={sbBalance}
-              odBalance={odBalance}
-              balance={sbBalance + odBalance}
-            />
-          )}
+<DashboardScreen
+  shgName={shgName}
+  shgId={shgId}
+  memberCount={members.length}
+  currentBalance={currentBalance}
+  totalOutstandingLoans={totalOutstandingLoans}
+  setCurrentPage={setCurrentPage}
+  members={members}
+  getMemberMobile={getMemberMobile}
+  setAlertMessage={setAlertMessage}
+  setShowAlert={setShowAlert}
+  setAlertCopyContent={setAlertCopyContent}
+  setConfirmAction={setConfirmAction}
+  sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
+  sbBalance={sbBalance}
+  odBalance={odBalance}
+  balance={sbBalance + odBalance}
+  setShowCreateReminderModal={setShowCreateReminderModal}
+/>
 
 {currentPage === "shgProfile" && (
   <ShgProfileScreen
@@ -1463,37 +1574,60 @@ return (
           newMemberDesignation={newMemberDesignation}
           setNewMemberDesignation={setNewMemberDesignation}
         />
-        {/* WhatsApp Reminder Modal */}
+
+<CreateReminderModal
+  show={showCreateReminderModal}
+  onClose={() => setShowCreateReminderModal(false)}
+  language={reminderLanguage}
+  setLanguage={setReminderLanguage}
+  members={members}
+  selectedMemberId={reminderMemberId}
+  setSelectedMemberId={setReminderMemberId}
+  savingAmount={reminderSaving}
+  setSavingAmount={setReminderSaving}
+  fineAmount={reminderFine}
+  setFineAmount={setReminderFine}
+  outstandingLoan={getOutstandingLoanForMember(reminderMemberId)}
+  interestAmount={reminderInterest}
+  setInterestAmount={setReminderInterest}
+  dueDate={reminderDueDate}
+  setDueDate={setReminderDueDate}
+  handleGenerate={handleGenerateReminder}
+/>
+
+        {/* 📱 WhatsApp Reminder Modal (FINAL & CLEAN) */}
 {showReminderModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+    onClick={() => setShowReminderModal(false)}
+  >
     <div
-      className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-xl w-full max-w-lg"
+      className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-xl shadow-2xl p-6"
       onClick={(e) => e.stopPropagation()}
     >
-      <h2 className="text-2xl font-bold mb-3 text-gray-800 dark:text-gray-100 text-center">
+      <h2 className="text-2xl font-bold mb-3 text-center text-gray-800 dark:text-gray-100">
         📱 Send WhatsApp Reminder
       </h2>
 
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-3 text-center">
-        Type your reminder message below. You can send it directly via WhatsApp
-        or copy all member numbers.
+        Review the message below. You can send it via WhatsApp or copy all member numbers.
       </p>
 
       <textarea
-        rows="4"
-        className="w-full p-3 border rounded-lg mb-4 dark:bg-gray-700 dark:text-white"
-        placeholder="Enter your reminder message..."
+        rows="6"
+        className="w-full p-3 border rounded-lg mb-3 dark:bg-gray-700 dark:text-white"
+        placeholder="Reminder message..."
         value={reminderMessage}
         onChange={(e) => setReminderMessage(e.target.value)}
-      ></textarea>
-      <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-3">
-  💾 This message is auto-saved for next time.
-</p>
+      />
 
+      <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-4">
+        💾 This message is auto-saved for next time.
+      </p>
 
       <div className="flex flex-col sm:flex-row justify-center gap-3">
         <button
-          onClick={() => handleSendWhatsApp()}
+          onClick={handleSendWhatsApp}
           disabled={!reminderMessage.trim()}
           className="px-5 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md disabled:bg-gray-400"
         >
@@ -1501,22 +1635,24 @@ return (
         </button>
 
         <button
-          onClick={handleCopyNumbers}
-          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md"
-        >
-          📋 Copy Numbers
-        </button>
+  onClick={handleCopyMessage}
+  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md"
+>
+  📋 Copy Message
+</button>
+
 
         <button
           onClick={() => setShowReminderModal(false)}
           className="px-5 py-2 bg-gray-300 hover:bg-gray-400 rounded-md"
         >
-              Cancel
-             </button>
-            </div>
-          </div>
-          </div>
-         )}
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
 
       </div>
     </AuthContext.Provider>
@@ -1592,7 +1728,8 @@ const DashboardScreen = ({
   sendGeneralWhatsAppReminder,
   sbBalance = 0,
   odBalance = 0,
-  balance = 0, // ✅ combined total already computed in App.js
+  balance = 0,
+  setShowCreateReminderModal, // ✅ ADD THIS
 }) => {
   return (
     <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
@@ -1685,11 +1822,12 @@ const DashboardScreen = ({
           onClick={() => setCurrentPage("meetings")}
         />
         <ActionButton
-          label="Send General WhatsApp Reminder"
-          icon="💬"
-          onClick={sendGeneralWhatsAppReminder}
-          color="bg-green-500 hover:bg-green-600"
-        />
+  label="Create Reminder"
+  icon="🔔"
+  onClick={() => setShowCreateReminderModal(true)}
+  color="bg-green-500 hover:bg-green-600"
+/>
+
       </div>
     </div>
   );
