@@ -16,6 +16,8 @@ import { uploadBytesResumable} from "firebase/storage";
 import { doc, updateDoc } from "firebase/firestore";
 import { storage, db } from "./firebase";
 import CreateReminderModal from "./components/Reminders/CreateReminderModal";
+import LoanCalculator from "./components/Loans/LoanCalculator";
+
 
 
 
@@ -1424,6 +1426,7 @@ return (
     odBalance={odBalance}
     balance={sbBalance + odBalance}
     setShowCreateReminderModal={setShowCreateReminderModal}
+
   />
 )}
 
@@ -1550,6 +1553,10 @@ return (
           {currentPage === "backup" && (
             <BackupScreen db={db} userId={userId} shgId={shgId || "main"} />
           )}
+{currentPage === "loanCalculator" && (
+  <LoanCalculator members={members} />
+)}
+
         </main>
 
         {/* 🧭 Bottom Navigation */}
@@ -1824,12 +1831,21 @@ const DashboardScreen = ({
           icon="🗓️"
           onClick={() => setCurrentPage("meetings")}
         />
-        <ActionButton
-  label="Create Reminder"
-  icon="🔔"
-  onClick={() => setShowCreateReminderModal(true)}
-  color="bg-green-500 hover:bg-green-600"
+        
+  <ActionButton
+    label="Create Reminder"
+    icon="🔔"
+    onClick={() => setShowCreateReminderModal(true)}
+    color="bg-green-500 hover:bg-green-600"
+  />
+
+<ActionButton
+  label="Loan Calculator"
+  icon="🧮"
+  onClick={() => setCurrentPage("loanCalculator")}
+  color="bg-orange-500 hover:bg-orange-600"
 />
+
 
       </div>
     </div>
