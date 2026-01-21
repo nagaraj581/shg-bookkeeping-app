@@ -1405,25 +1405,28 @@ return (
   className="flex-1 p-4 md:p-6 overflow-auto"
   style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}
 >
-<DashboardScreen
-  shgName={shgName}
-  shgId={shgId}
-  memberCount={members.length}
-  currentBalance={currentBalance}
-  totalOutstandingLoans={totalOutstandingLoans}
-  setCurrentPage={setCurrentPage}
-  members={members}
-  getMemberMobile={getMemberMobile}
-  setAlertMessage={setAlertMessage}
-  setShowAlert={setShowAlert}
-  setAlertCopyContent={setAlertCopyContent}
-  setConfirmAction={setConfirmAction}
-  sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
-  sbBalance={sbBalance}
-  odBalance={odBalance}
-  balance={sbBalance + odBalance}
-  setShowCreateReminderModal={setShowCreateReminderModal}
-/>
+{currentPage === "dashboard" && (
+  <DashboardScreen
+    shgName={shgName}
+    shgId={shgId}
+    memberCount={members.length}
+    currentBalance={currentBalance}
+    totalOutstandingLoans={totalOutstandingLoans}
+    setCurrentPage={setCurrentPage}
+    members={members}
+    getMemberMobile={getMemberMobile}
+    setAlertMessage={setAlertMessage}
+    setShowAlert={setShowAlert}
+    setAlertCopyContent={setAlertCopyContent}
+    setConfirmAction={setConfirmAction}
+    sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
+    sbBalance={sbBalance}
+    odBalance={odBalance}
+    balance={sbBalance + odBalance}
+    setShowCreateReminderModal={setShowCreateReminderModal}
+  />
+)}
+
 
 {currentPage === "shgProfile" && (
   <ShgProfileScreen
