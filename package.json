@@ -1,6 +1,6 @@
 {
   "name": "shg-bookkeeping-app",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.1",

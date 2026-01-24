@@ -27,6 +27,9 @@ import TransactionTable from "./TransactionTable";
  * - db, shgId, userId, setAlertMessage, setShowAlert, getMemberName
  */
 
+
+
+
 const APP_ID = "shg-bookkeeping-app";
 
 const bankIcon = "🏦";
@@ -78,6 +81,8 @@ const BookkeepingScreen = (props) => {
     fetchTransactions,
     getMemberName,
   } = props;
+
+  
 
   // debug log for loans
   useEffect(() => {
@@ -218,10 +223,13 @@ useEffect(() => {
       // create loan doc with auto Firestore id
       const newLoanRef = doc(loansColRef);
       const isoDate = (loanDate && loanDate.slice) ? loanDate : new Date().toISOString().split("T")[0];
+      const memberObj = members.find(m => m.id === loanMemberId);
+      const memberName = memberObj?.name || "";
 
       const loanData = {
         id: newLoanRef.id,
         memberId: loanMemberId,
+        memberName,
         loanType: loanType || "Book Loan",
         principalAmount: Number(loanAmount),
         outstandingAmount: Number(loanAmount),
@@ -241,6 +249,7 @@ useEffect(() => {
         type: "Loan Disbursed",
         loanId: newLoanRef.id,
         memberId: loanMemberId,
+        memberName,
         amount: Number(loanAmount),
         loanType: loanType || "Book Loan",
         date: isoDate,
@@ -771,10 +780,13 @@ return (
                   shgId,
                   "transactions"
                 );
+                const memberName =
+  members.find(m => m.id === selectedMemberId)?.name || "";
                 await addDoc(txColRef, {
                   type: savingType === "Fine" ? "Fine" : "Saving",
                   savingType,
                   memberId: selectedMemberId,
+                  memberName,
                   amount: parseFloat(savingAmount),
                   date: savingDate || new Date().toISOString().split("T")[0],
                   createdAt: serverTimestamp(),

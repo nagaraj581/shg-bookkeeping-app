@@ -1073,19 +1073,19 @@ const recordSaving = async () => {
 
 
 const recordLoanRepayment = async () => {
-  if (!selectedLoanId || !principalRepaymentAmount) {
-    setAlertMessage("Please select a loan and enter repayment amounts.");
-    setShowAlert(true);
+  if (!db || !userId || !shgId || !selectedLoanId) {
+    alert("Missing data");
     return;
   }
 
   try {
-    const loan = loans.find((l) => l.id === selectedLoanId);
-    if (!loan) {
-      setAlertMessage("Loan not found.");
-      setShowAlert(true);
-      return;
-    }
+    // ✅ 1️⃣ FIRST derive loan → member
+    const loan = loans.find(l => l.id === selectedLoanId);
+    const memberId = loan?.memberId || null;
+    const memberName = loan?.memberName || "";
+
+    const principal = Number(principalRepaymentAmount) || 0;
+    const interest = Number(interestRepaymentAmount) || 0;
 
     const txColRef = collection(
       db,
@@ -1098,55 +1098,24 @@ const recordLoanRepayment = async () => {
       "transactions"
     );
 
-    const dateISO = repaymentDate || new Date().toISOString().split("T")[0];
-    const principal = Number(principalRepaymentAmount) || 0;
-    const interest = Number(interestRepaymentAmount) || 0;
-
-    const txData = {
+    // ✅ 2️⃣ THEN use memberName
+    await addDoc(txColRef, {
       type: "Loan Repayment",
       loanId: selectedLoanId,
-      memberId: loan.memberId,
-      loanType: loan.loanType || "Book Loan", // ✅ ensure included
+      memberId,
+      memberName, // ✅ SAFE NOW
       principalRepaid: principal,
       interestRepaid: interest,
       amount: principal + interest,
-      date: dateISO,
-      description: `Repayment for ${loan.loanType}`,
+      date: repaymentDate || new Date().toISOString().split("T")[0],
       createdAt: serverTimestamp(),
       recordedBy: userId,
-    };
-
-    await addDoc(txColRef, txData);
-
-    // ✅ Update loan doc totals
-    const loanRef = doc(
-      db,
-      "artifacts",
-      APP_ID,
-      "users",
-      userId,
-      "shg_groups",
-      shgId,
-      "loans",
-      selectedLoanId
-    );
-    await updateDoc(loanRef, {
-      outstandingAmount: (loan.outstandingAmount || 0) - principal,
-      totalRepaid: (loan.totalRepaid || 0) + principal + interest,
     });
 
-    setAlertMessage("Loan repayment recorded successfully!");
-    setShowAlert(true);
-
-    // Clear fields
-    setSelectedLoanId("");
-    setPrincipalRepaymentAmount("");
-    setInterestRepaymentAmount("");
-    setRepaymentDate("");
+    alert("Repayment recorded successfully");
   } catch (err) {
-    console.error("recordLoanRepayment error:", err);
-    setAlertMessage(`Error recording repayment: ${err.message}`);
-    setShowAlert(true);
+    console.error("Error recording repayment:", err);
+    alert("Error recording repayment");
   }
 };
 const recordExpense = async () => {
