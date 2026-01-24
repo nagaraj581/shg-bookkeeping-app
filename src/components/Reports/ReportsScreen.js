@@ -655,7 +655,7 @@ setOutstandingLoans(activeLoans);
                     <tr className="bg-gray-100">
                       <th className="p-2 border">Member</th>
                       <th className="p-2 border">Loan Type</th>
-                      <th className="p-2 border">Principal (₹)</th>
+                      <th className="p-2 border">Loan Amount (₹)</th>
                       <th className="p-2 border">Outstanding (₹)</th>
                       <th className="p-2 border">Status</th>
                     </tr>
