@@ -56,9 +56,9 @@ export default function BottomNav({ currentPage, setCurrentPage }) {
 />
       <NavItem
         icon="🗓️"
-        label="Meetings"
-        onClick={() => setCurrentPage("meetings")}
-        active={currentPage === "meetings"}
+        label="Accounts"
+        onClick={() => setCurrentPage("accounts")}
+        active={currentPage === "accounts"}
       />
       <NavItem
         icon="🔐"

@@ -7,7 +7,6 @@ const formatINR = (num) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  const formatRs = (num) => formatINR(num); // no ₹ symbol
 
 
 const LoanCalculator = ({ members = [] }) => {

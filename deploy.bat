@@ -1,9 +1,32 @@
-@echo off
+@echo on
+cd /d %~dp0
+
 echo ==========================================
-echo 🚀 Starting PRO Deploy for SHG App
+echo Starting Safe Deploy for SHG App
 echo ==========================================
-npm run pro-deploy
+
+echo.
+echo [1/3] Building project...
+call npm run build
+if errorlevel 1 (
+  echo ❌ Build failed. Deployment stopped.
+  pause
+  exit /b 1
+)
+
+echo.
+echo [2/3] Deploying to Firebase...
+call firebase deploy --only hosting
+if errorlevel 1 (
+  echo ❌ Firebase deploy failed.
+  pause
+  exit /b 1
+)
+
+echo.
+echo [3/3] Deployment successful!
 echo ==========================================
-echo ✅ Pro Deploy Finished. Check above for any errors.
+echo ✅ App deployed successfully.
 echo ==========================================
+
 pause

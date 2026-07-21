@@ -2,14 +2,217 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: keep these small tweaks for better font & smoothness */
+/* ----------------------------
+   Global
+----------------------------- */
+
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   @apply font-sans text-gray-900 bg-gray-100 dark:bg-gray-900 dark:text-gray-100;
+
+  margin: 0;
+  padding: 0;
+
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Code block styling (optional, for debug output) */
 code {
   @apply font-mono text-blue-700;
+}
+
+/* =====================================================
+   MONTHLY COLLECTION SHEET (A4 LANDSCAPE)
+===================================================== */
+
+.monthly-sheet {
+  width: 297mm;
+  min-height: 210mm;
+
+  margin: 24px auto;
+  padding: 12mm;
+
+  background: #ffffff;
+  color: #111827;
+
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+
+  box-sizing: border-box;
+}
+
+/* =====================================================
+   HEADER
+===================================================== */
+
+.sheet-header {
+  text-align: center;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #374151;
+}
+
+.sheet-header h2 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #111827;
+}
+
+.sheet-header h3 {
+  margin: 8px 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #374151;
+}
+
+.sheet-header p {
+  margin: 0;
+  font-size: 15px;
+  color: #6b7280;
+}
+
+/* =====================================================
+   TABLE
+===================================================== */
+
+.monthly-sheet table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-top: 10px;
+}
+
+.monthly-sheet th,
+.monthly-sheet td {
+  border: 1px solid #4b5563;
+  padding: 8px 6px;
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.monthly-sheet th {
+  background: #1e293b;
+  color: white;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Column widths */
+
+.monthly-sheet th:nth-child(1),
+.monthly-sheet td:nth-child(1) {
+  width: 45px;
+  text-align: center;
+}
+
+.monthly-sheet th:nth-child(2),
+.monthly-sheet td:nth-child(2) {
+  width: 260px;
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.monthly-sheet th:nth-child(3),
+.monthly-sheet td:nth-child(3),
+.monthly-sheet th:nth-child(4),
+.monthly-sheet td:nth-child(4),
+.monthly-sheet th:nth-child(5),
+.monthly-sheet td:nth-child(5),
+.monthly-sheet th:nth-child(6),
+.monthly-sheet td:nth-child(6),
+.monthly-sheet th:nth-child(7),
+.monthly-sheet td:nth-child(7) {
+  width: 100px;
+  text-align: right;
+}
+
+/* Alternate rows */
+
+.monthly-sheet tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.monthly-sheet tbody tr:hover {
+  background: #eff6ff;
+}
+
+/* =====================================================
+   INPUTS
+===================================================== */
+
+.monthly-sheet input {
+  width: 100%;
+  border: none;
+  background: transparent;
+
+  outline: none;
+
+  padding: 3px 5px;
+
+  font-size: 14px;
+  text-align: right;
+}
+
+.monthly-sheet input:focus {
+  background: #dbeafe;
+  border-radius: 4px;
+}
+
+/* =====================================================
+   TOTAL COLUMN
+===================================================== */
+
+.monthly-sheet td:last-child {
+  font-weight: 700;
+  color: #15803d;
+}
+
+/* =====================================================
+   FOOTER TOTAL
+===================================================== */
+
+.monthly-sheet tfoot td {
+  background: #e5e7eb;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+/* =====================================================
+   PRINT
+===================================================== */
+
+@media print {
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: white !important;
+  }
+
+  .monthly-sheet {
+    width: 100%;
+    min-height: auto;
+
+    margin: 0;
+    padding: 0;
+
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
 }

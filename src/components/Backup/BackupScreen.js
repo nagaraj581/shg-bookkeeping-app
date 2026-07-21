@@ -33,7 +33,7 @@ const BackupScreen = ({ db, userId, shgId }) => {
 
   // 🔹 Fetch all collections
   const fetchAllData = async () => {
-    const collections = ["members", "transactions", "loans", "meetings"];
+    const collections = ["members", "transactions", "loans"];
     const data = {};
     for (const name of collections) {
       try {

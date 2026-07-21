@@ -1,20 +1,21 @@
 import BottomNav from "./components/Shared/BottomNav";
 import MembersScreen from "./components/Members/MembersScreen";
 import MemberFormModal from "./components/Members/MemberFormModal";
+import MemberExitScreen from "./components/Members/MemberExitScreen";
 import BookkeepingScreen from "./components/Bookkeeping/BookkeepingScreen";
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import AlertModal from "./components/Shared/AlertModal";
 import ReportsScreen from "./components/Reports/ReportsScreen";
-import MeetingsScreen from "./components/Meetings/MeetingsScreen";
+import AccountsScreen from "./components/Accounts/AccountsScreen";
 import BackupScreen from "./components/Backup/BackupScreen";
 import MultiUserAccessInfo from "./components/MultiUser/MultiUserAccessInfo";
+import MemberDashboard from "./components/Member/MemberDashboard";
 import { useAuth } from "./contexts/AuthContext"; // adjust path if needed
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import TailwindTest from './TailwindTest';
+import { ref, getDownloadURL } from "firebase/storage";
 import TransactionForm from "./components/TransactionForm";
 import { uploadBytesResumable} from "firebase/storage";
 import { doc, updateDoc } from "firebase/firestore";
-import { storage, db } from "./firebase";
+import firebaseApp, { storage, db as sharedDb, auth as sharedAuth } from "./firebase";
 import CreateReminderModal from "./components/Reminders/CreateReminderModal";
 import LoanCalculator from "./components/Loans/LoanCalculator";
 
@@ -32,10 +33,8 @@ import * as XLSX from "xlsx";
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInAnonymously, 
   onAuthStateChanged, 
   signOut, 
-  signInWithCustomToken,
   GoogleAuthProvider, 
   signInWithPopup,    
 } from 'firebase/auth';
@@ -53,6 +52,8 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 
+const ADMIN_EMAIL = "nagaraj581@gmail.com";
+const ADMIN_UID = "zAvxVe5VvIToYxz0r3TIw6orkQu1";
 const APP_ID = "shg-bookkeeping-app";
 
 
@@ -67,10 +68,6 @@ storageBucket: "shg-bookkeeping-app.firebasestorage.app",
   measurementId: "G-2FXB7ZPRXP"
 };
 
-// Define contexts
-const FirebaseContext = createContext(null);
-const AuthContext = createContext(null);
-
 // Format number in Indian style (₹ 1,00,000.00)
 const formatINR = (num) => {
   const n = Number(num) || 0;
@@ -80,25 +77,38 @@ const formatINR = (num) => {
   });
 };
 
+const normalizeEmail = (value = "") => String(value).trim().toLowerCase();
+
 
 
 
 const App = () => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser } = useAuth();
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
+  const [userRole, setUserRole] = useState("checking");
+  const [memberAccess, setMemberAccess] = useState(null);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const formatName = (name = "") =>
     name.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+  const clearSensitiveState = useCallback(() => {
+    setMembers([]);
+    setTransactions([]);
+    setLoans([]);
+    setMemberAccess(null);
+    setShgName("");
+    setShgId("");
+    setSbBalance(0);
+    setOdBalance(0);
+  }, []);
   
 
   
 
 
 
-  // profile info for header
-  const [userProfile, setUserProfile] = useState({ displayName: "", photoURL: "" });
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [members, setMembers] = useState([]);
@@ -135,6 +145,7 @@ const [reminderLanguage, setReminderLanguage] = useState("en");
 const [reminderMemberId, setReminderMemberId] = useState("");
 const [reminderSaving, setReminderSaving] = useState(500); // default monthly saving
 const [reminderFine, setReminderFine] = useState("");
+const [reminderPrincipal, setReminderPrincipal] = useState("");
 const [reminderInterest, setReminderInterest] = useState("");
 const [reminderDueDate, setReminderDueDate] = useState(
   new Date().toISOString().split("T")[0]
@@ -153,13 +164,6 @@ const [reminderDueDate, setReminderDueDate] = useState(
 
   // Loan states
   const [loans, setLoans] = useState([]);
-  const [loanMemberId, setLoanMemberId] = useState('');
-  const [loanAmount, setLoanAmount] = useState('');
-  const [loanInterestRate, setLoanInterestRate] = useState('');
-  const [loanTermMonths, setLoanTermMonths] = useState('');
-  const [loanDate, setLoanDate] = useState(new Date().toISOString().split('T')[0]);
-  const [loanDescription, setLoanDescription] = useState('');
-  const [loanType, setLoanType] = useState('Book Loan');
 
   // Repayment states
   const [selectedLoanId, setSelectedLoanId] = useState('');
@@ -174,61 +178,9 @@ const [reminderDueDate, setReminderDueDate] = useState(
   const [expenseCategory, setExpenseCategory] = useState('Stationery');
   const [sbBalance, setSbBalance] = useState(0);
 const [odBalance, setOdBalance] = useState(0);
-
-  // Meeting states
-  const [meetings, setMeetings] = useState([]);
-  const [meetingDate, setMeetingDate] = useState(new Date().toISOString().split('T')[0]);
-  const [meetingAgenda, setMeetingAgenda] = useState('');
-  const [meetingMinutes, setMeetingMinutes] = useState('');
-  const [selectedMeetingAttendees, setSelectedMeetingAttendees] = useState([]);
-
-  // ---------- Transaction edit / delete state (paste near other useState declarations) ----------
-const [editingTransaction, setEditingTransaction] = useState(null); // transaction object to edit
-const [showTransactionModal, setShowTransactionModal] = useState(false);
-
-// Filters for transactions (for Bookkeeping & Accounting lists)
-const [txFilterMemberId, setTxFilterMemberId] = useState(''); // '' = all
-const [txFilterType, setTxFilterType] = useState(''); // '' = all (Saving, Expense, Loan Disbursed, Loan Repayment, Bank Loan Repayment, Fine)
-
-// ---------- Edit/Delete helpers ----------
-const openEditTransaction = (tx) => {
-  // ensure we have local string values for editing inputs
-  setEditingTransaction({
-    ...tx,
-    // ensure amounts are strings for inputs
-    amount: tx.amount !== undefined ? String(tx.amount) : '',
-    principalRepaid: tx.principalRepaid !== undefined ? String(tx.principalRepaid) : '',
-    interestRepaid: tx.interestRepaid !== undefined ? String(tx.interestRepaid) : '',
-    date: tx.date ? tx.date.split('T')[0] : (new Date().toISOString().split('T')[0])
-  });
-  setShowTransactionModal(true);
-};
-
-
-const handleDeleteTransaction = (tx) => {
-  setAlertMessage("Are you sure you want to delete this transaction? This action cannot be undone.");
-  setConfirmAction(() => async () => {
-    if (!db || !userId || !shgId) {
-      setAlertMessage("App not ready: DB/user/SHG not initialized.");
-      setShowAlert(true);
-      setConfirmAction(null);
-      return;
-    }
-    const projectId = getCurrentProjectId();
-    try {
-      await deleteDoc(doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`, tx.id));
-      setAlertMessage("Transaction deleted.");
-      setShowAlert(true);
-    } catch (err) {
-      console.error("delete transaction error", err);
-      setAlertMessage("Failed to delete transaction: " + (err.message || err));
-      setShowAlert(true);
-    } finally {
-      setConfirmAction(null);
-    }
-  });
-  setShowAlert(true);
-};
+const activeMembers = members.filter(
+  (member) => String(member.status || "active").toLowerCase() !== "exited"
+);
 
 // App.js (inside the App component)
 const handleSignOut = async () => {
@@ -241,8 +193,9 @@ const handleSignOut = async () => {
     setShowSignOutConfirm(false);
 
     // Reset state and go to login screen
+    clearSensitiveState();
     setUserId(null);
-    setUserProfile({ displayName: "", photoURL: "" });
+    setUserRole("checking");
     setShowLoginScreen(true);
     console.log("✅ Signed out successfully");
   } catch (error) {
@@ -275,9 +228,15 @@ const handleGenerateReminder = () => {
   const payload = {
     memberName: formatName(member.name),
     outstandingLoan: getOutstandingLoanForMember(reminderMemberId),
+    principal: reminderPrincipal,
     interest: reminderInterest,
     saving: reminderSaving,
     fine: reminderFine,
+    total:
+      (Number(reminderSaving) || 0) +
+      (Number(reminderFine) || 0) +
+      (Number(reminderPrincipal) || 0) +
+      (Number(reminderInterest) || 0),
     dueDate: formatDateDMY(reminderDueDate),
   };
   
@@ -306,29 +265,6 @@ const handleGenerateReminder = () => {
   };
 
   // ---- add inside App component, near other helpers ----
-const fetchTransactions = async () => {
-  try {
-    if (!db || !userId || !shgId) {
-      // not ready yet
-      return;
-    }
-    const projectId = getCurrentProjectId();
-    if (!projectId) return;
-
-    const txColRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`);
-    const snapshot = await getDocs(txColRef);
-    const transactionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    // ensure consistent date ordering if needed
-    transactionsData.sort((a, b) => new Date(b.date) - new Date(a.date));
-    setTransactions(transactionsData);
-    console.log("fetchTransactions: loaded", transactionsData.length);
-  } catch (err) {
-    console.error("fetchTransactions error:", err);
-    setAlertMessage(`Failed to fetch transactions: ${err.message || err}`);
-    setShowAlert(true);
-  }
-};
-
 // ---- paste inside the App component, near other helper functions ----
 const exportTransactionsToXlsx = () => {
   try {
@@ -396,18 +332,22 @@ const getOutstandingLoanForMember = (memberId) => {
 const generateReminderMessageEN = ({
   memberName,
   outstandingLoan,
+  principal,
   interest,
   saving,
   fine,
+  total,
   dueDate,
 }) => {
   return `Dear ${memberName},
 
 Your outstanding loan amount is ₹${outstandingLoan}.
 
+Principal: ₹${principal || 0}
 Interest: ₹${interest || 0}  
-Monthly saving: ₹${saving}  
+Monthly saving: ₹${saving || 0}  
 Fine: ₹${fine || 0}  
+*🔴 Total Payable: ₹${total || 0}*
 
 Please pay the above amount before the due date of ${dueDate}.
 
@@ -419,17 +359,21 @@ SHG Management`;
 const generateReminderMessageKN = ({
   memberName,
   outstandingLoan,
+  principal,
   interest,
   saving,
   fine,
+  total,
   dueDate,
 }) => {
   return `ಪ್ರಿಯ ${memberName},
 
 ನಿಮ್ಮ ಬಾಕಿ ಸಾಲ ಮೊತ್ತ ₹${outstandingLoan}.
+ಅಸಲು: ₹${principal || 0}
 ಬಡ್ಡಿ: ₹${interest || 0}.
-ಮಾಸಿಕ ಉಳಿತಾಯ: ₹${saving}.
-ದಂಡ: ₹${fine || 0}.
+ಮಾಸಿಕ ಉಳಿತಾಯ: ₹${saving || 0}  
+ದಂಡ: ₹${fine || 0}  
+*🔴 ಒಟ್ಟು ಮೊತ್ತ: ₹${total || 0}*
 
 ದಯವಿಟ್ಟು ${dueDate} ರೊಳಗಾಗಿ ಮೇಲ್ಕಂಡ ಮೊತ್ತವನ್ನು ಪಾವತಿಸಿ.
 
@@ -441,59 +385,94 @@ const generateReminderMessageKN = ({
 useEffect(() => {
   const initFirebase = async () => {
       let activeFirebaseConfig = firebaseConfig; // Start with the hardcoded config
-      let initialAuthToken = null;
-      let usingCanvasConfig = false;
 
       // Check if Canvas environment variables are available.
       if (typeof window.__firebase_config !== 'undefined' && typeof window.__initial_auth_token !== 'undefined') {
         try {
           activeFirebaseConfig = JSON.parse(window.__firebase_config);
-          initialAuthToken = window.__initial_auth_token;
-          usingCanvasConfig = true;
           console.log("Using Canvas-provided Firebase configuration.");
         } catch (e) {
           console.error("Error parsing __firebase_config from Canvas:", e);
           setAlertMessage(`Error parsing Canvas Firebase configuration: ${e.message}`);
           setShowAlert(true);
           activeFirebaseConfig = firebaseConfig;
-          initialAuthToken = null; 
-          usingCanvasConfig = false;
         }
       } else {
         console.log("Canvas Firebase configuration not found. Using hardcoded config.");
       }
 
       try {
-        const app = initializeApp(activeFirebaseConfig);
-        const firestore = getFirestore(app);
-        const authInstance = getAuth(app);
+        const usingCanvasConfig =
+          typeof window.__firebase_config !== 'undefined' &&
+          typeof window.__initial_auth_token !== 'undefined';
+
+        const app = usingCanvasConfig ? initializeApp(activeFirebaseConfig, "canvas-app") : firebaseApp;
+        const firestore = usingCanvasConfig ? getFirestore(app) : sharedDb;
+        const authInstance = usingCanvasConfig ? getAuth(app) : sharedAuth;
 
         setDb(firestore);
         setAuth(authInstance);
 
-onAuthStateChanged(authInstance, async (user) => {
+        onAuthStateChanged(authInstance, async (user) => {
         if (user) {
-          setUserId(user.uid);
+          const normalizedUserEmail = normalizeEmail(user.email);
+          const normalizedAdminEmail = normalizeEmail(ADMIN_EMAIL);
+          const projectId = activeFirebaseConfig?.projectId;
+
+          // detect member login
+          try {
+            const memberAccessRef = doc(
+              firestore,
+              "artifacts",
+              projectId,
+              "users",
+              ADMIN_UID,
+              "member_access",
+              normalizedUserEmail
+            );
+            const memberAccessSnap = await getDoc(memberAccessRef);
+
+            if (normalizedUserEmail === normalizedAdminEmail) {
+              setUserRole("admin");
+              setUserId(user.uid);
+              setMemberAccess(null);
+              console.log("Logged in as ADMIN");
+            } else if (memberAccessSnap.exists()) {
+              setUserRole("member");
+              setUserId(ADMIN_UID);
+              setMemberAccess(memberAccessSnap.data());
+              console.log("Logged in as MEMBER");
+            } else {
+              setUserRole("blocked");
+              clearSensitiveState();
+              setUserId(null);
+              setShowLoginScreen(false);
+              return;
+            }
+          } catch (err) {
+            console.error("Role detection error:", err);
+            setUserRole("blocked");
+            clearSensitiveState();
+            setUserId(null);
+            setShowLoginScreen(false);
+            return;
+          }
 
   // load SHG data (returns shgName if you added the return in loadShgData)
-  const loadedShgName = await loadShgData(firestore, user.uid, activeFirebaseConfig?.projectId);
-          const finalDisplayName = user.displayName || loadedShgName || "";
-          const finalPhotoURL = user.photoURL || "";
-
-
-          setUserProfile({
-            displayName: finalDisplayName,
-    photoURL: finalPhotoURL
-          });
-
+  await loadShgData(
+    firestore,
+    normalizedUserEmail === normalizedAdminEmail ? user.uid : ADMIN_UID,
+    projectId
+  );
           setShowLoginScreen(false);
         } else {
+          clearSensitiveState();
           setUserId(null);
-          setUserProfile({ displayName: "", photoURL: "" });
+          setUserRole("checking");
           setShowLoginScreen(true);
         }
-        setLoading(false);
       });
+        setLoading(false);
     } catch (error) {
       console.error("Error initializing Firebase:", error);
       setAlertMessage(`Firebase initialization failed: ${error.message}`);
@@ -503,7 +482,7 @@ onAuthStateChanged(authInstance, async (user) => {
   };
 
   initFirebase();
-  }, []); 
+  }, [clearSensitiveState]);
 
 // Load SHG data after authentication and db is ready 
 const loadShgData = async (firestoreInstance, currentUserId, projectId) => {
@@ -564,10 +543,10 @@ const loadShgData = async (firestoreInstance, currentUserId, projectId) => {
     }
     const projectId = getCurrentProjectId();
 
-    setAlertMessage("Are you absolutely sure you want to delete this SHG? This action is irreversible and will delete ALL members, transactions, loans, and meetings associated with this SHG.");
+    setAlertMessage("Are you absolutely sure you want to delete this SHG? This action is irreversible and will delete ALL members, transactions, and loans associated with this SHG.");
     setConfirmAction(() => async () => {
         try {
-            // Delete members and their subcollections (transactions, loans, meetings)
+            // Delete members and their subcollections (transactions, loans)
             const membersCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`);
             const memberDocs = await getDocs(membersCollectionRef);
             await Promise.all(memberDocs.docs.map(async (memberDoc) => {
@@ -603,11 +582,6 @@ const loadShgData = async (firestoreInstance, currentUserId, projectId) => {
             const allLoanDocs = await getDocs(allLoansRef);
             await Promise.all(allLoanDocs.docs.map(d => deleteDoc(d.ref)));
 
-            // Delete all meetings
-            const meetingsRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/meetings`);
-            const meetingDocs = await getDocs(meetingsRef);
-            await Promise.all(meetingDocs.docs.map(d => deleteDoc(d.ref)));
-
             // Finally, delete the SHG main document
             const shgDocRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/main`)
             await deleteDoc(shgDocRef);
@@ -619,7 +593,6 @@ const loadShgData = async (firestoreInstance, currentUserId, projectId) => {
             setMembers([]);
             setTransactions([]);
             setLoans([]);
-            setMeetings([]);
             await signOut(auth); 
             setAlertMessage("SHG and all associated data deleted successfully. You have been signed out.");
             setShowAlert(true);
@@ -635,7 +608,7 @@ const loadShgData = async (firestoreInstance, currentUserId, projectId) => {
     setShowAlert(true);
   };
 
-const getCurrentProjectId = () => {
+const getCurrentProjectId = useCallback(() => {
     try {
       if (db && db.app && db.app.options && db.app.options.projectId) {
         return db.app.options.projectId;
@@ -644,19 +617,83 @@ const getCurrentProjectId = () => {
     } catch {
       return null;
     }
-  };
-  
+  }, [db]);
+
+  const upsertMemberAccessDoc = useCallback(
+    async (projectId, ownerUserId, activeShgId, memberId, memberData = {}) => {
+      const normalizedEmail = normalizeEmail(memberData.email);
+
+      if (!db || !projectId || !ownerUserId || !activeShgId || !memberId || !normalizedEmail) {
+        return;
+      }
+
+      await setDoc(
+        doc(db, "artifacts", projectId, "users", ownerUserId, "member_access", normalizedEmail),
+        {
+          memberId,
+          shgId: activeShgId,
+          email: normalizedEmail,
+          name: memberData.name || "",
+          designation: memberData.designation || "member",
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    },
+    [db]
+  );
+
+  const deleteMemberAccessDoc = useCallback(
+    async (projectId, ownerUserId, memberEmail) => {
+      const normalizedEmail = normalizeEmail(memberEmail);
+
+      if (!db || !projectId || !ownerUserId || !normalizedEmail) {
+        return;
+      }
+
+      await deleteDoc(
+        doc(db, "artifacts", projectId, "users", ownerUserId, "member_access", normalizedEmail)
+      );
+    },
+    [db]
+  );
+
   // Fetch members when db, userId, or shgId changes
   useEffect(() => {
     const projectId = getCurrentProjectId(); 
-    if (db && userId && shgId && projectId) {
+    const canReadShgData =
+      !!currentUser && (userRole === "admin" || userRole === "member");
+
+    if (db && canReadShgData && userId && shgId && projectId) {
+      if (userRole === "member" && memberAccess?.memberId) {
+        const memberRef = doc(
+          db,
+          `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`,
+          memberAccess.memberId
+        );
+
+        const unsubscribe = onSnapshot(
+          memberRef,
+          (snapshot) => {
+            const memberData = snapshot.exists() ? [{ id: snapshot.id, ...snapshot.data() }] : [];
+            setMembers(memberData);
+          },
+          (error) => {
+            console.error("Error fetching members:", error);
+            setAlertMessage(`Error fetching members: ${error.message}`);
+            setShowAlert(true);
+          }
+        );
+
+        return () => unsubscribe();
+      }
+
       const membersCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`);
       const q = query(membersCollectionRef);
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const membersData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         setMembers(membersData);
-        console.log("Members fetched:", membersData);
       }, (error) => {
         console.error("Error fetching members:", error);
         setAlertMessage(`Error fetching members: ${error.message}`);
@@ -665,20 +702,25 @@ const getCurrentProjectId = () => {
 
       return () => unsubscribe();
     }
-  }, [db, userId, shgId]); 
+  }, [db, currentUser, userId, userRole, shgId, getCurrentProjectId, memberAccess]); 
 
   // Fetch transactions when db, userId, or shgId changes
   useEffect(() => {
     const projectId = getCurrentProjectId();
-    if (db && userId && shgId && projectId) {
+    const canReadShgData =
+      !!currentUser && (userRole === "admin" || userRole === "member");
+
+    if (db && canReadShgData && userId && shgId && projectId) {
       const transactionsCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`);
-      const q = query(transactionsCollectionRef);
+      const q =
+        userRole === "member" && memberAccess?.memberId
+          ? query(transactionsCollectionRef, where("memberId", "==", memberAccess.memberId))
+          : query(transactionsCollectionRef);
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const transactionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         transactionsData.sort((a, b) => new Date(b.date) - new Date(a.date));
         setTransactions(transactionsData);
-        console.log("Transactions fetched:", transactionsData);
       }, (error) => {
         console.error("Error fetching transactions:", error);
         setAlertMessage(`Error fetching transactions: ${error.message}`);
@@ -687,7 +729,7 @@ const getCurrentProjectId = () => {
 
       return () => unsubscribe();
     }
-  }, [db, userId, shgId]);
+  }, [db, currentUser, userId, userRole, shgId, getCurrentProjectId, memberAccess]);
 
 // 🔹 Compute SB / OD balances whenever transactions change
 useEffect(() => {
@@ -734,6 +776,17 @@ useEffect(() => {
         sb -= amount;
         break;
 
+      case "Account Transfer": {
+        const fromAccount = String(t.fromAccount || "").toUpperCase();
+        const toAccount = String(t.toAccount || "").toUpperCase();
+
+        if (fromAccount === "SB") sb -= amount;
+        if (fromAccount === "OD") od -= amount;
+        if (toAccount === "SB") sb += amount;
+        if (toAccount === "OD") od += amount;
+        break;
+      }
+
       default:
         break;
     }
@@ -747,14 +800,19 @@ useEffect(() => {
   // Fetch loans when db, userId, or shgId changes
   useEffect(() => {
     const projectId = getCurrentProjectId();
-    if (db && userId && shgId && projectId) {
+    const canReadShgData =
+      !!currentUser && (userRole === "admin" || userRole === "member");
+
+    if (db && canReadShgData && userId && shgId && projectId) {
       const loansCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans`);
-      const q = query(loansCollectionRef);
+      const q =
+        userRole === "member" && memberAccess?.memberId
+          ? query(loansCollectionRef, where("memberId", "==", memberAccess.memberId))
+          : query(loansCollectionRef);
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const loansData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setLoans(loansData);
-        console.log("Loans fetched:", loansData);
       }, (error) => {
         console.error("Error fetching loans:", error);
         setAlertMessage(`Error fetching loans: ${error.message}`);
@@ -763,41 +821,31 @@ useEffect(() => {
 
       return () => unsubscribe();
     }
-  }, [db, userId, shgId]);
+  }, [db, currentUser, userId, userRole, shgId, getCurrentProjectId, memberAccess]);
 
-  // Fetch meetings when db, userId, or shgId changes
   useEffect(() => {
     const projectId = getCurrentProjectId();
-    if (db && userId && shgId && projectId) {
-      const meetingsCollectionRef = collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/meetings`);
-      const q = query(meetingsCollectionRef);
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const meetingsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        meetingsData.sort((a, b) => new Date(b.date) - new Date(a.date)); 
-        setMeetings(meetingsData);
-        console.log("Meetings fetched:", meetingsData);
-      }, (error) => {
-        console.error("Error fetching meetings:", error);
-        setAlertMessage(`Error fetching meetings: ${error.message}`);
-        setShowAlert(true);
-      });
-
-      return () => unsubscribe();
+    if (userRole !== "admin" || !db || !userId || !shgId || !projectId || members.length === 0) {
+      return;
     }
-  }, [db, userId, shgId]);
 
-useEffect(() => {
-  const auth = getAuth();
-  const unsubscribe = onAuthStateChanged(auth, (user) => {
-    if (user) {
-      setUserId(user.uid);   // ✅ store userId for Firestore paths
-    } else {
-      setUserId(null);
-    }
-  });
-  return () => unsubscribe();
-}, []);
+    const syncAccess = async () => {
+      try {
+        await Promise.all(
+          members
+            .filter((member) => String(member.status || "active").toLowerCase() !== "exited")
+            .map((member) =>
+            upsertMemberAccessDoc(projectId, userId, shgId, member.id, member)
+          )
+        );
+      } catch (error) {
+        console.error("Error syncing member access:", error);
+      }
+    };
+
+    syncAccess();
+  }, [db, getCurrentProjectId, members, shgId, upsertMemberAccessDoc, userId, userRole]);
 
 const addOrUpdateMember = async () => {
   if (
@@ -835,7 +883,7 @@ const finalMobile = `+91${ten}`;
     const memberData = {
       name: newMemberName.trim(),
       mobile: finalMobile,
-      email: newMemberEmail.trim(),
+      email: normalizeEmail(newMemberEmail),
       joiningDate: newMemberJoiningDate,
       designation: newMemberDesignation,
       address: newMemberAddress?.trim() || "", // NEW
@@ -843,6 +891,7 @@ const finalMobile = `+91${ten}`;
     };
 
     if (editingMember) {
+      const previousEmail = normalizeEmail(editingMember.email);
       // Update existing member
       const memberRef = doc(
         db,
@@ -850,10 +899,14 @@ const finalMobile = `+91${ten}`;
         editingMember.id
       );
       await updateDoc(memberRef, memberData);
+      await upsertMemberAccessDoc(projectId, userId, shgId, editingMember.id, memberData);
+      if (previousEmail && previousEmail !== memberData.email) {
+        await deleteMemberAccessDoc(projectId, userId, previousEmail);
+      }
       setAlertMessage("Member updated successfully!");
     } else {
       // Add new member
-      await addDoc(
+      const memberDocRef = await addDoc(
         collection(
           db,
           `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`
@@ -864,6 +917,7 @@ const finalMobile = `+91${ten}`;
           addedBy: userId,
         }
       );
+      await upsertMemberAccessDoc(projectId, userId, shgId, memberDocRef.id, memberData);
       setAlertMessage("Member added successfully!");
     }
 
@@ -889,8 +943,10 @@ const finalMobile = `+91${ten}`;
     setConfirmAction(() => async () => {
       const projectId = getCurrentProjectId();
       try {
+        const memberToDelete = members.find((member) => member.id === memberId);
         const memberRef = doc(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/members`, memberId);
         await deleteDoc(memberRef);
+        await deleteMemberAccessDoc(projectId, userId, memberToDelete?.email);
 
         // Delete associated transactions
         const memberTransactionsQuery = query(
@@ -1028,6 +1084,8 @@ const loanSnap = await getDoc(loanRef);
       savingType: transaction.savingType || null,
       loanType: transaction.loanType || null,
       category: transaction.category || null,
+      fromAccount: transaction.fromAccount || null,
+      toAccount: transaction.toAccount || null,
       date: transaction.date || new Date().toISOString().split('T')[0],
       description: transaction.description || transaction.Description || '',
       createdAt: serverTimestamp(),
@@ -1037,16 +1095,239 @@ const loanSnap = await getDoc(loanRef);
     await addDoc(collection(db, `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/transactions`), txDoc);
     setAlertMessage(`${transaction.type} recorded successfully!`);
     setShowAlert(true);
+    return true;
   } catch (error) {
     console.error("addTransaction error:", error);
     setAlertMessage(`Error recording ${transaction.type}: ${error.message}`);
     setShowAlert(true);
+    return false;
   }
+};
+
+const repairMemberLoans = async (memberId) => {
+  const projectId = getCurrentProjectId();
+  if (!db || !userId || !shgId || !projectId || !memberId) {
+    setAlertMessage("App not ready to repair loans.");
+    setShowAlert(true);
+    return;
+  }
+
+  const toAmount = (value) => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    if (typeof value === "string") {
+      const cleaned = value.replace(/,/g, "").trim();
+      return cleaned ? Number(cleaned) || 0 : 0;
+    }
+    return Number(value || 0) || 0;
+  };
+  const normalizeLoanType = (value) => String(value || "").trim().toLowerCase();
+  const normalizeType = (value) => String(value || "").trim().toLowerCase();
+  const normalizeDate = (value) => {
+    if (!value) return "";
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) {
+        const [dd, mm, yyyy] = trimmed.split("-");
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      return trimmed.slice(0, 10);
+    }
+    if (value?.toDate) return value.toDate().toISOString().slice(0, 10);
+    return "";
+  };
+  const normalizeTimestamp = (value) => {
+    if (!value) return "";
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+    }
+    if (value?.toDate) {
+      return value.toDate().toISOString();
+    }
+    return "";
+  };
+  const compareByDate = (a, b) => {
+    const aDate = normalizeDate(a.date) || "9999-12-31";
+    const bDate = normalizeDate(b.date) || "9999-12-31";
+    if (aDate < bDate) return -1;
+    if (aDate > bDate) return 1;
+    const aCreatedAt = normalizeTimestamp(a.createdAt);
+    const bCreatedAt = normalizeTimestamp(b.createdAt);
+    if (aCreatedAt && bCreatedAt) {
+      if (aCreatedAt < bCreatedAt) return -1;
+      if (aCreatedAt > bCreatedAt) return 1;
+    }
+    return String(a.id || "").localeCompare(String(b.id || ""));
+  };
+  const getPrincipalPaid = (tx) =>
+    toAmount(tx.principalRepaid ?? tx.principalRepayment ?? 0);
+  const getInterestPaid = (tx) =>
+    toAmount(tx.interestRepaid ?? tx.interestRepayment ?? 0);
+
+  const memberName = members.find((member) => member.id === memberId)?.name || "";
+  const memberLoans = loans
+    .filter((loan) => loan.memberId === memberId)
+    .slice()
+    .sort(compareByDate);
+
+  if (memberLoans.length === 0) {
+    setAlertMessage("No loans found for this member.");
+    setShowAlert(true);
+    return;
+  }
+
+  const memberRepayments = transactions
+    .filter(
+      (tx) =>
+        (normalizeType(tx.type) === "loan repayment" ||
+          normalizeType(tx.type) === "member exit adjustment") &&
+        (tx.memberId === memberId ||
+          (memberName &&
+            String(tx.memberName || "").trim().toLowerCase() ===
+              memberName.trim().toLowerCase()))
+    )
+    .slice()
+    .sort(compareByDate);
+
+  const loansById = new Map(memberLoans.map((loan) => [loan.id, loan]));
+  const loanGroups = new Map();
+  memberLoans.forEach((loan) => {
+    const key = normalizeLoanType(loan.loanType);
+    if (!loanGroups.has(key)) {
+      loanGroups.set(key, []);
+    }
+    loanGroups.get(key).push(loan);
+  });
+
+  const repaymentTotals = new Map();
+  const addRepaymentToLoan = (loanId, principalPaid, interestPaid) => {
+    if (!loanId || !loansById.has(loanId)) return;
+    const current = repaymentTotals.get(loanId) || { principal: 0, interest: 0 };
+    current.principal += principalPaid;
+    current.interest += interestPaid;
+    repaymentTotals.set(loanId, current);
+  };
+
+  memberRepayments.forEach((tx) => {
+    if (normalizeType(tx.type) === "member exit adjustment") {
+      if (Array.isArray(tx.loanAdjustments)) {
+        tx.loanAdjustments.forEach((adjustment) => {
+          addRepaymentToLoan(
+            adjustment.loanId,
+            Math.max(0, toAmount(adjustment.adjustedAmount)),
+            0
+          );
+        });
+      } else if (tx.loanId && loansById.has(tx.loanId)) {
+        addRepaymentToLoan(tx.loanId, Math.max(0, toAmount(tx.amount)), 0);
+      }
+      return;
+    }
+
+    const principalPaid = Math.max(0, getPrincipalPaid(tx));
+    let remainingPrincipal = principalPaid;
+    let remainingInterest = Math.max(0, getInterestPaid(tx));
+
+    if (tx.loanId && loansById.has(tx.loanId)) {
+      addRepaymentToLoan(tx.loanId, principalPaid, remainingInterest);
+      return;
+    }
+
+    const loanTypeKey = normalizeLoanType(tx.loanType);
+    const repaymentDate = normalizeDate(tx.date);
+    const candidates = (loanGroups.get(loanTypeKey) || memberLoans).filter((loan) => {
+      const loanDate = normalizeDate(loan.date);
+      return !repaymentDate || !loanDate || loanDate <= repaymentDate;
+    });
+
+    const targets = (candidates.length ? candidates : memberLoans).filter((loan) => {
+      const totals = repaymentTotals.get(loan.id) || { principal: 0, interest: 0 };
+      return Math.max(0, toAmount(loan.principalAmount) - totals.principal) > 0;
+    });
+
+    targets.forEach((loan, index) => {
+      if (remainingPrincipal <= 0 && remainingInterest <= 0) {
+        return;
+      }
+
+      const totals = repaymentTotals.get(loan.id) || { principal: 0, interest: 0 };
+      const remainingOutstanding = Math.max(
+        0,
+        toAmount(loan.principalAmount) - totals.principal
+      );
+      const principalShare = Math.min(remainingPrincipal, remainingOutstanding);
+      const interestShare =
+        remainingInterest > 0 &&
+        (index === targets.length - 1 || remainingPrincipal <= principalShare || principalShare <= 0)
+          ? remainingInterest
+          : 0;
+
+      if (principalShare > 0 || interestShare > 0) {
+        addRepaymentToLoan(loan.id, principalShare, interestShare);
+      }
+
+      remainingPrincipal = Math.max(0, remainingPrincipal - principalShare);
+      remainingInterest = Math.max(0, remainingInterest - interestShare);
+    });
+  });
+
+  const repairs = memberLoans
+    .map((loan) => {
+      const totals = repaymentTotals.get(loan.id) || { principal: 0, interest: 0 };
+      const principalAmount = Math.max(0, toAmount(loan.principalAmount));
+      const outstandingAmount = Math.max(0, principalAmount - totals.principal);
+      const totalRepaid = Math.max(0, totals.principal + totals.interest);
+      const status = outstandingAmount <= 0 ? "closed" : "active";
+      const currentOutstanding = toAmount(loan.outstandingAmount);
+      const currentTotalRepaid = toAmount(loan.totalRepaid);
+      const currentStatus = String(loan.status || "active").toLowerCase();
+      const changed =
+        Math.abs(currentOutstanding - outstandingAmount) > 0.0001 ||
+        Math.abs(currentTotalRepaid - totalRepaid) > 0.0001 ||
+        currentStatus !== status;
+
+      return changed
+        ? { loan, outstandingAmount, totalRepaid, status }
+        : null;
+    })
+    .filter(Boolean);
+
+  if (repairs.length === 0) {
+    setAlertMessage("No loan repair needed for this member.");
+    setShowAlert(true);
+    return;
+  }
+
+  await Promise.all(
+    repairs.map(({ loan, outstandingAmount, totalRepaid, status }) =>
+      updateDoc(
+        doc(
+          db,
+          `artifacts/${projectId}/users/${userId}/shg_groups/${shgId}/loans/${loan.id}`
+        ),
+        {
+          outstandingAmount,
+          totalRepaid,
+          status,
+          updatedAt: serverTimestamp(),
+        }
+      )
+    )
+  );
+
+  setAlertMessage(`Loan repair completed for ${memberName || "Member"}. Updated ${repairs.length} loan record(s).`);
+  setShowAlert(true);
 };
 
 const recordSaving = async () => {
   if (!db || !userId || !shgId || !selectedMemberId || !savingAmount || isNaN(parseFloat(savingAmount)) || parseFloat(savingAmount) <= 0 || !savingType.trim()) {
     setAlertMessage("Please select a member, enter a valid positive saving amount, and select a saving type.");
+    setShowAlert(true);
+    return;
+  }
+
+  if (!activeMembers.some((member) => member.id === selectedMemberId)) {
+    setAlertMessage("This member has exited. New savings or fines cannot be recorded.");
     setShowAlert(true);
     return;
   }
@@ -1073,17 +1354,23 @@ const recordSaving = async () => {
 
 
 const recordLoanRepayment = async () => {
-  if (!db || !userId || !shgId || !selectedLoanId) {
-    alert("Missing data");
+  if (!selectedLoanId || !principalRepaymentAmount) {
+    setAlertMessage("Please select a loan and enter repayment amounts.");
+    setShowAlert(true);
     return;
   }
 
   try {
     // ✅ 1️⃣ FIRST derive loan → member
-    const loan = loans.find(l => l.id === selectedLoanId);
-    const memberId = loan?.memberId || null;
-    const memberName = loan?.memberName || "";
+    const loan = loans.find((l) => l.id === selectedLoanId);
+    if (!loan) {
+      setAlertMessage("Loan not found.");
+      setShowAlert(true);
+      return;
+    }
 
+    const memberName = loan.memberName || "";
+    const dateISO = repaymentDate || new Date().toISOString().split("T")[0];
     const principal = Number(principalRepaymentAmount) || 0;
     const interest = Number(interestRepaymentAmount) || 0;
 
@@ -1102,20 +1389,50 @@ const recordLoanRepayment = async () => {
     await addDoc(txColRef, {
       type: "Loan Repayment",
       loanId: selectedLoanId,
-      memberId,
-      memberName, // ✅ SAFE NOW
+      memberId: loan.memberId,
+      memberName,
+      loanType: loan.loanType || "Book Loan",
       principalRepaid: principal,
       interestRepaid: interest,
       amount: principal + interest,
-      date: repaymentDate || new Date().toISOString().split("T")[0],
+      date: dateISO,
+      description: `${loan.loanType} Repayment`,
       createdAt: serverTimestamp(),
       recordedBy: userId,
     });
 
-    alert("Repayment recorded successfully");
+    const loanRef = doc(
+      db,
+      "artifacts",
+      APP_ID,
+      "users",
+      userId,
+      "shg_groups",
+      shgId,
+      "loans",
+      selectedLoanId
+    );
+
+    const nextOutstanding = Math.max(0, (loan.outstandingAmount || 0) - principal);
+    const nextTotalRepaid = (loan.totalRepaid || 0) + principal + interest;
+    const nextStatus = nextOutstanding <= 0 ? "closed" : (loan.status || "active");
+
+    await updateDoc(loanRef, {
+      outstandingAmount: nextOutstanding,
+      totalRepaid: nextTotalRepaid,
+      status: nextStatus,
+    });
+
+    setAlertMessage("Loan repayment recorded successfully!");
+    setShowAlert(true);
+    setSelectedLoanId("");
+    setPrincipalRepaymentAmount("");
+    setInterestRepaymentAmount("");
+    setRepaymentDate("");
   } catch (err) {
-    console.error("Error recording repayment:", err);
-    alert("Error recording repayment");
+    console.error("recordLoanRepayment error:", err);
+    setAlertMessage(`Error recording repayment: ${err.message}`);
+    setShowAlert(true);
   }
 };
 const recordExpense = async () => {
@@ -1171,7 +1488,7 @@ const recordExpense = async () => {
 // 💬 General WhatsApp Reminder (place inside App, not outside)
 // Send General WhatsApp Reminder
 const sendGeneralWhatsAppReminder = () => {
-  let allNumbers = members.map(m => m.mobile).filter(Boolean);
+  let allNumbers = activeMembers.map(m => m.mobile).filter(Boolean);
   if (allNumbers.length === 0) {
     setAlertMessage("No members with mobile numbers to send reminders.");
     setShowAlert(true);
@@ -1195,7 +1512,7 @@ const handleCopyMessage = () => {
 // Send via WhatsApp with prefilled message
 const handleSendWhatsApp = () => {
   const text = encodeURIComponent(reminderMessage);
-  const allNumbers = members.map(m => m.mobile).filter(Boolean);
+  const allNumbers = activeMembers.map(m => m.mobile).filter(Boolean);
   if (allNumbers.length === 0) return;
 
   const whatsappUrl = `https://wa.me/?text=${text}`;
@@ -1226,7 +1543,7 @@ const handleSendWhatsApp = () => {
 
   // Calculate total outstanding loans
   const totalOutstandingLoans = loans.reduce((sum, loan) => {
-    return sum + loan.outstandingAmount;
+    return sum + (Number(loan.outstandingAmount) || 0);
   }, 0);
 
 
@@ -1238,9 +1555,52 @@ const handleSendWhatsApp = () => {
     );
   }
 
+  if (auth && !currentUser) {
+    return <LoginScreen auth={auth} setShowLoginScreen={setShowLoginScreen} setAlertMessage={setAlertMessage} setShowAlert={setShowAlert} />;
+  }
+
+  if (currentUser && userRole === "checking") {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+        <div className="text-xl font-semibold">Checking access...</div>
+      </div>
+    );
+  }
+
   // If login screen is to be shown, render it instead of the main app
   if (showLoginScreen) {
     return <LoginScreen auth={auth} setShowLoginScreen={setShowLoginScreen} setAlertMessage={setAlertMessage} setShowAlert={setShowAlert} />;
+  }
+
+  if (userRole === "blocked") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100 p-6 text-gray-900">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-lg">
+          <h1 className="text-2xl font-bold text-blue-700">Welcome to Kudradi SHG</h1>
+          <p className="mt-3 text-sm text-gray-600">
+            Please contact admin for registration or to view this page.
+          </p>
+          <button
+            onClick={handleSignOut}
+            className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (userRole === "member") {
+    return (
+      <MemberDashboard
+        members={members}
+        transactions={transactions}
+        loans={loans}
+        currentUserEmail={currentUser?.email}
+        onLogout={handleSignOut}
+      />
+    );
   }
 
  // Add here, line 908
@@ -1283,8 +1643,6 @@ const updateShgDetails = async (newData = {}) => {
 };
 
 return (
-  <FirebaseContext.Provider value={{ db, auth }}>
-    <AuthContext.Provider value={{ userId }}>
       <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100">
         {/* 🔔 Alert / Confirmation Modal */}
         <AlertModal
@@ -1377,26 +1735,27 @@ return (
   style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}
 >
 {currentPage === "dashboard" && (
-  <DashboardScreen
-    shgName={shgName}
-    shgId={shgId}
-    memberCount={members.length}
-    currentBalance={currentBalance}
-    totalOutstandingLoans={totalOutstandingLoans}
-    setCurrentPage={setCurrentPage}
-    members={members}
-    getMemberMobile={getMemberMobile}
-    setAlertMessage={setAlertMessage}
-    setShowAlert={setShowAlert}
-    setAlertCopyContent={setAlertCopyContent}
-    setConfirmAction={setConfirmAction}
-    sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
-    sbBalance={sbBalance}
-    odBalance={odBalance}
-    balance={sbBalance + odBalance}
-    setShowCreateReminderModal={setShowCreateReminderModal}
-
-  />
+  <>
+    <DashboardScreen
+      shgName={shgName}
+      shgId={shgId}
+      memberCount={activeMembers.length}
+      currentBalance={currentBalance}
+      totalOutstandingLoans={totalOutstandingLoans}
+      setCurrentPage={setCurrentPage}
+      members={activeMembers}
+      getMemberMobile={getMemberMobile}
+      setAlertMessage={setAlertMessage}
+      setShowAlert={setShowAlert}
+      setAlertCopyContent={setAlertCopyContent}
+      setConfirmAction={setConfirmAction}
+      sendGeneralWhatsAppReminder={sendGeneralWhatsAppReminder}
+      sbBalance={sbBalance}
+      odBalance={odBalance}
+      balance={sbBalance + odBalance}
+      setShowCreateReminderModal={setShowCreateReminderModal}
+    />
+  </>
 )}
 
 
@@ -1417,24 +1776,37 @@ return (
 )}
           {currentPage === "members" && (
             <MembersScreen
-              members={members}
+              members={activeMembers}
               openAddMemberModal={openAddMemberModal}
               openEditMemberModal={openEditMemberModal}
               deleteMember={handleDeleteMember}
-              getMemberName={getMemberName}
-              getMemberMobile={getMemberMobile}
-              setAlertMessage={setAlertMessage}
-              setShowAlert={setShowAlert}
+              setCurrentPage={setCurrentPage}
+              userRole={userRole}
             />
           )}
 
-          {currentPage === "bookkeeping" && (
+          {currentPage === "memberExit" && userRole === "admin" && (
+            <MemberExitScreen
+              members={members}
+              transactions={transactions}
+              loans={loans}
+              db={db}
+              userId={userId}
+              shgId={shgId}
+              setAlertMessage={setAlertMessage}
+              setShowAlert={setShowAlert}
+              setConfirmAction={setConfirmAction}
+              setCurrentPage={setCurrentPage}
+            />
+          )}
+
+          {currentPage === "bookkeeping" && userRole === "admin" && (
             <BookkeepingScreen
               members={members}
               transactions={transactions}
               loans={loans}
+              userRole={userRole}
               getMemberName={getMemberName}
-              fetchTransactions={fetchTransactions}
               exportTransactionsToXlsx={exportTransactionsToXlsx}
               setConfirmAction={setConfirmAction}
               getMemberMobile={getMemberMobile}
@@ -1470,9 +1842,6 @@ return (
               expenseCategory={expenseCategory}
               setExpenseCategory={setExpenseCategory}
               recordExpense={recordExpense}
-              // Table hooks
-              openEditTransaction={openEditTransaction}
-              handleDeleteTransaction={handleDeleteTransaction}
               // Firebase & helpers
               db={db}
               shgId={shgId}
@@ -1480,9 +1849,17 @@ return (
             />
           )}
 
-          {currentPage === "addTransaction" && (
+{currentPage === "addTransaction" && (
   <div className="p-6">
-    <TransactionForm db={db} userId={userId} shgId={shgId} />
+    <TransactionForm
+      db={db}
+      userId={userId}
+      shgId={shgId}
+      members={members}
+      loans={loans}
+      setAlertMessage={setAlertMessage}
+      setShowAlert={setShowAlert}
+    />
   </div>
 )}
 
@@ -1493,27 +1870,19 @@ return (
     transactions={transactions}
     loans={loans}
     members={members}
-    getMemberName={getMemberName}
-    currentBalance={currentBalance}
-    totalOutstandingLoans={totalOutstandingLoans}
-    setAlertMessage={setAlertMessage}
-    setShowAlert={setShowAlert}
-    db={db}
-    userId={userId}
-    shgId={shgId}
-    getCurrentProjectId={getCurrentProjectId}
-    exportTransactionsToXlsx={exportTransactionsToXlsx}
+    userRole={userRole}
+    repairMemberLoans={repairMemberLoans}
     sbBalance={sbBalance}     // ✅ From App.js (computed centrally)
     odBalance={odBalance}     // ✅ From App.js (computed centrally)
   />
 )}
 
-          {currentPage === "meetings" && (
-            <MeetingsScreen
-              db={db}
-              userId={userId}
-              shgId={shgId || "main"}
-              members={members}
+          {currentPage === "accounts" && (
+            <AccountsScreen
+              transactions={transactions}
+              sbBalance={sbBalance}
+              odBalance={odBalance}
+              addTransaction={addTransaction}
             />
           )}
 
@@ -1523,7 +1892,7 @@ return (
             <BackupScreen db={db} userId={userId} shgId={shgId || "main"} />
           )}
 {currentPage === "loanCalculator" && (
-  <LoanCalculator members={members} />
+  <LoanCalculator members={activeMembers} />
 )}
 
         </main>
@@ -1559,7 +1928,7 @@ return (
   onClose={() => setShowCreateReminderModal(false)}
   language={reminderLanguage}
   setLanguage={setReminderLanguage}
-  members={members}
+  members={activeMembers}
   selectedMemberId={reminderMemberId}
   setSelectedMemberId={setReminderMemberId}
   savingAmount={reminderSaving}
@@ -1567,6 +1936,8 @@ return (
   fineAmount={reminderFine}
   setFineAmount={setReminderFine}
   outstandingLoan={getOutstandingLoanForMember(reminderMemberId)}
+  principalAmount={reminderPrincipal}
+  setPrincipalAmount={setReminderPrincipal}
   interestAmount={reminderInterest}
   setInterestAmount={setReminderInterest}
   dueDate={reminderDueDate}
@@ -1634,8 +2005,6 @@ return (
 
 
       </div>
-    </AuthContext.Provider>
-  </FirebaseContext.Provider>
 );
 }
 
@@ -1796,9 +2165,9 @@ const DashboardScreen = ({
           onClick={() => setCurrentPage("reports")}
         />
         <ActionButton
-          label="Schedule Meeting"
+          label="Account Deposits"
           icon="🗓️"
-          onClick={() => setCurrentPage("meetings")}
+          onClick={() => setCurrentPage("accounts")}
         />
         
   <ActionButton

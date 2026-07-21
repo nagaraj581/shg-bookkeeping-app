@@ -1,7 +1,6 @@
 // src/components/Bookkeeping/BookkeepingScreen.js
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { query } from "firebase/firestore";
 import { writeBatch } from "firebase/firestore"; // ⬅️ add at top with other imports
 
 
@@ -9,11 +8,9 @@ import {
   addDoc,
   collection,
   getDocs,
-  where,
   doc,
   setDoc,
   serverTimestamp,
-  updateDoc,
 } from "firebase/firestore";
 import TransactionTable from "./TransactionTable";
 
@@ -30,15 +27,12 @@ import TransactionTable from "./TransactionTable";
 
 
 
-const APP_ID = "shg-bookkeeping-app";
-
-const bankIcon = "🏦";
-const bookIcon = "📘";
-
 const BookkeepingScreen = (props) => {
   const {
     members = [],
+    transactions = [],
     loans = [],
+    userRole = "admin",
 
     // saving
     selectedMemberId,
@@ -78,16 +72,8 @@ const BookkeepingScreen = (props) => {
     userId,
     setAlertMessage,
     setShowAlert,
-    fetchTransactions,
     getMemberName,
   } = props;
-
-  
-
-  // debug log for loans
-  useEffect(() => {
-    console.log("BOOKKEEPING: loans:", loans);
-  }, [loans]);
 
   // Local loan form state
   const [loanMemberId, setLoanMemberId] = useState("");
@@ -111,23 +97,8 @@ const BookkeepingScreen = (props) => {
   const [fileInputKey, setFileInputKey] = useState(0);
   // Month selector state (defaults to current month)
 const now = new Date();
-const [filterYear, setFilterYear] = useState(now.getFullYear());
-const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1); // 1-12
-
-// Call parent if available (preferred), else fallback to fetchTransactions()
-useEffect(() => {
-  const load = async () => {
-    if (typeof props.fetchTransactionsByMonth === "function") {
-      await props.fetchTransactionsByMonth(filterYear, filterMonth);
-    } else if (typeof fetchTransactions === "function") {
-      // optional: change your existing fetch to accept a month/year later
-      await fetchTransactions();
-    }
-  };
-  load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [filterYear, filterMonth]);
-
+const [filterYear] = useState(now.getFullYear());
+const [filterMonth] = useState(now.getMonth() + 1); // 1-12
 
   // default appId used in your Firestore layout (matches console screenshots)
   const APP_ID = "shg-bookkeeping-app";
@@ -139,7 +110,10 @@ useEffect(() => {
 
   // members memo
   const membersOptions = useMemo(
-    () => members.map((m) => ({ id: m.id, name: m.name })),
+    () =>
+      members
+        .filter((m) => String(m.status || "active").toLowerCase() !== "exited")
+        .map((m) => ({ id: m.id, name: m.name })),
     [members]
   );
 
@@ -347,6 +321,11 @@ const importXLSXRows = async () => {
         console.warn(`Skipping row ${i + 1}: Unknown member "${rawMember}"`);
         continue;
       }
+      const memberExited = String(member.status || "active").toLowerCase() === "exited";
+      if (memberExited && type !== "Loan Repayment") {
+        console.warn(`Skipping row ${i + 1}: ${member.name} has exited.`);
+        continue;
+      }
 
       const dateISO = toISO(row.Date || row.date);
       const baseTx = {
@@ -373,10 +352,12 @@ const importXLSXRows = async () => {
           const principal = Number(row["Principal Repaid"] ?? row.principalRepaid ?? 0) || 0;
           const interest  = Number(row["Interest Repaid"]  ?? row.interestRepaid  ?? 0) || 0;
           const total = principal + interest;
+          const match = activeLoanMap.get(key);
 
           const txDocRef = doc(txColRef);
           batch.set(txDocRef, {
             ...baseTx,
+            loanId: match ? match.ref.id : null,
             loanType: normalizedLoanType,
             principalRepaid: principal,
             interestRepaid: interest,
@@ -385,7 +366,6 @@ const importXLSXRows = async () => {
           ops++;
 
           // Update matched loan (from our prefetch map)
-          const match = activeLoanMap.get(key);
           if (match) {
             const L = match.data;
             const newOutstanding = Math.max(0, Number(L.outstandingAmount || 0) - principal);
@@ -483,15 +463,10 @@ const importXLSXRows = async () => {
     // Final commit
     await commitBatch();
 
-    console.log(`✅ Import finished. ${importedCount} transactions imported.`);
     alert(`XLSX import finished. ${importedCount} rows imported.`);
 
     setPreviewData([]);
     setUploadedFile(null);
-
-    if (typeof fetchTransactions === "function") {
-      await fetchTransactions(); // parent refresh
-    }
   } catch (error) {
     console.error("Error importing XLSX:", error);
     alert("Error importing XLSX: " + (error.message || error));
@@ -502,80 +477,6 @@ const importXLSXRows = async () => {
   setUploadedFile(null);
   setPreviewData([]);
 };
-
-// ✳️ CACHE-BUSTED FILE READER — only this function and the input below changed
-// 🔥 Ultimate cache-proof Excel loader
-const handleXLSXFileChange = async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-
-  console.log("📁 File selected:", file.name, file.lastModified);
-
-  // Full hard reset
-  setUploadedFile(null);
-  setPreviewData([]);
-
-  // Make this file unique to kill any memory reuse
-  const uniqueTag = `${crypto.randomUUID()}_${Date.now()}`;
-  const uniqueFile = new File([file], uniqueTag, { type: file.type });
-
-  // Recreate reader each time (not reused)
-  const reader = new FileReader();
-
-  reader.onload = (evt) => {
-    try {
-      const buffer = evt.target.result;
-      const wb = XLSX.read(buffer, {
-        type: "array",
-        cellDates: true,
-        cellNF: false,
-        cellText: false,
-      });
-
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws, {
-        defval: "",
-        raw: false,
-        dateNF: "yyyy-mm-dd",
-      });
-
-      console.log("✅ Read fresh Excel:", {
-        uniqueTag,
-        rows: data.length,
-        firstRow: data[0],
-      });
-
-      setUploadedFile(uniqueFile);
-      setPreviewData(data);
-
-      // force UI refresh of <input type="file">
-      setFileInputKey((k) => k + 1);
-
-      // fully dispose reader
-      reader.abort();
-    } catch (err) {
-      console.error("❌ Parse error:", err);
-      alert("Failed to parse Excel: " + (err.message || err));
-      setPreviewData([]);
-      setUploadedFile(null);
-    }
-  };
-
-  reader.onerror = (err) => {
-    console.error("⚠️ FileReader error:", err);
-    alert("Error reading file: " + (err.message || err));
-    setPreviewData([]);
-    setUploadedFile(null);
-  };
-
-  // 🚫 async microdelay prevents sync cache reuse
-  await new Promise((r) => setTimeout(r, 25));
-
-  reader.readAsArrayBuffer(uniqueFile);
-};
-
-const transactionTableRef = useRef();
 
 return (
   <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in space-y-6">
@@ -622,13 +523,6 @@ return (
                   dateNF: "yyyy-mm-dd",
                 });
 
-                console.log("✅ Fresh import success:", {
-                  name: uniqueFile.name,
-                  modified: uniqueFile.lastModified,
-                  rows: data.length,
-                  firstRow: data[0],
-                });
-
                 setUploadedFile(uniqueFile);
                 setPreviewData(data);
               } catch (err) {
@@ -648,13 +542,6 @@ return (
         />
 
         <button
-          onClick={() => console.log(previewData)}
-          className="px-3 py-2 bg-blue-600 text-white rounded-md"
-        >
-          Import Preview Rows
-        </button>
-
-        <button
           onClick={importXLSXRows}
           className="px-3 py-2 bg-green-600 text-white rounded-md"
         >
@@ -670,7 +557,6 @@ return (
 
             const input = document.querySelector('input[type="file"]');
             if (input) input.value = ""; // full browser reset
-            console.log("🧹 Cleared file input + cache reset");
           }}
           className="px-3 py-2 bg-gray-300 rounded-md"
         >
@@ -865,7 +751,7 @@ return (
             className="p-2 border rounded-md bg-white dark:bg-gray-700"
           >
             <option value="">Select Member</option>
-            {members.map((m) => (
+            {membersOptions.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>
@@ -1057,10 +943,12 @@ return (
         <h3 className="font-semibold mb-3">Transactions & History</h3>
 
 <TransactionTable
-  ref={transactionTableRef}
   userId={userId}
   shgId={shgId}
   members={members}
+  loans={loans}
+  transactions={transactions}
+  userRole={userRole}
   projectId={db.app.options.projectId}
   selectedMonth={filterMonth}
   selectedYear={filterYear}

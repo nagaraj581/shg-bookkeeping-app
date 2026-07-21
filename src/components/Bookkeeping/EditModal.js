@@ -37,6 +37,7 @@ export default function EditModal({ transaction: tx, onClose, onSave, members = 
     date: toDateInputValue(tx?.date || tx?._date),
     type: tx?.type || "",
     memberId: tx?.memberId || "",
+    loanId: tx?.loanId || "",
     amount: tx?.amount ?? "",
     loanType: tx?.loanType || "",
     principalRepaid: tx?.principalRepaid ?? "",
@@ -49,6 +50,7 @@ export default function EditModal({ transaction: tx, onClose, onSave, members = 
       date: toDateInputValue(tx?.date || tx?._date),
       type: tx?.type || "",
       memberId: tx?.memberId || "",
+      loanId: tx?.loanId || "",
       amount: tx?.amount ?? "",
       loanType: tx?.loanType || "",
       principalRepaid: tx?.principalRepaid ?? "",
@@ -62,6 +64,7 @@ export default function EditModal({ transaction: tx, onClose, onSave, members = 
     const updates = {
       date: form.date ? new Date(form.date) : tx.date || new Date(),
       memberId: form.memberId || tx.memberId,
+      loanId: form.loanId || null,
       type: form.type || tx.type,
       amount: form.amount === "" ? 0 : parseFloat(form.amount),
       loanType: form.loanType || "",
@@ -145,7 +148,7 @@ export default function EditModal({ transaction: tx, onClose, onSave, members = 
           </div>
 
           {/* Amount + Loan Type */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
               <label className="form-label">Amount</label>
               <input
@@ -167,6 +170,17 @@ export default function EditModal({ transaction: tx, onClose, onSave, members = 
                 <option value="Book Loan">Book Loan</option>
                 <option value="Bank Loan">Bank Loan</option>
               </select>
+            </div>
+
+            <div>
+              <label className="form-label">Loan ID</label>
+              <input
+                type="text"
+                className="form-control w-full border p-2 rounded"
+                value={form.loanId}
+                onChange={(e) => setForm({ ...form, loanId: e.target.value })}
+                placeholder="Paste loan doc ID"
+              />
             </div>
           </div>
 

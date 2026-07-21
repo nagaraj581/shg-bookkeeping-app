@@ -21,6 +21,8 @@ const CreateReminderModal = ({
   outstandingLoan,
   interestAmount,
   setInterestAmount,
+  principalAmount = "",
+  setPrincipalAmount = () => {},
 
   dueDate,
   setDueDate,
@@ -29,6 +31,14 @@ const CreateReminderModal = ({
   if (!show) return null;
 
   const isKannada = language === "kn";
+  const safeSetPrincipalAmount =
+    typeof setPrincipalAmount === "function" ? setPrincipalAmount : () => {};
+  const toNumber = (value) => Number(value) || 0;
+  const totalAmount =
+    toNumber(savingAmount) +
+    toNumber(fineAmount) +
+    toNumber(principalAmount) +
+    toNumber(interestAmount);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -125,6 +135,19 @@ const CreateReminderModal = ({
           />
         </div>
 
+        {/* Principal */}
+        <div className="mb-3">
+          <label className="block text-sm font-semibold mb-1">
+            {isKannada ? "ಅಸಲು" : "Principal"}
+          </label>
+          <input
+            type="number"
+            value={principalAmount}
+            onChange={(e) => safeSetPrincipalAmount(e.target.value)}
+            className="w-full border rounded p-2"
+          />
+        </div>
+
         {/* Interest */}
         <div className="mb-3">
           <label className="block text-sm font-semibold mb-1">
@@ -135,6 +158,19 @@ const CreateReminderModal = ({
             value={interestAmount}
             onChange={(e) => setInterestAmount(e.target.value)}
             className="w-full border rounded p-2"
+          />
+        </div>
+
+        {/* Total (auto) */}
+        <div className="mb-3">
+          <label className="block text-sm font-semibold mb-1">
+            {isKannada ? "ಒಟ್ಟು ಮೊತ್ತ" : "Total Amount"}
+          </label>
+          <input
+            type="number"
+            value={totalAmount}
+            disabled
+            className="w-full border rounded p-2 bg-gray-100"
           />
         </div>
 

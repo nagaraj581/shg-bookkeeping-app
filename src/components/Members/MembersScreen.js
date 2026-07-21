@@ -6,6 +6,8 @@ const MembersScreen = ({
   openAddMemberModal = () => {},
   openEditMemberModal = () => {},
   deleteMember = () => {},
+  setCurrentPage = () => {},
+  userRole = "admin",
 }) => {
   // ensure we have an array to work with
   const safeMembers = Array.isArray(members) ? members : [];
@@ -14,19 +16,31 @@ const MembersScreen = ({
     <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-lg animate-fade-in">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-extrabold text-blue-800 dark:text-blue-300">SHG Members</h2>
-        <button
-          onClick={openAddMemberModal}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 
-                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 
-                     transition duration-200 ease-in-out flex items-center space-x-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-               xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-          </svg>
-          <span>Add Member</span>
-        </button>
+        {userRole === "admin" && (
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              onClick={() => setCurrentPage("memberExit")}
+              className="px-4 py-3 border border-orange-300 text-orange-700 rounded-lg shadow-sm hover:bg-orange-50
+                         focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-opacity-75
+                         transition duration-200 ease-in-out font-semibold"
+            >
+              Member Exit
+            </button>
+            <button
+              onClick={openAddMemberModal}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 
+                         focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 
+                         transition duration-200 ease-in-out flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                   xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+              </svg>
+              <span>Add Member</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {safeMembers.length === 0 ? (
@@ -48,7 +62,9 @@ const MembersScreen = ({
                                dark:text-gray-300 uppercase tracking-wider">Email</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 
                                dark:text-gray-300 uppercase tracking-wider">Joined</th>
-                <th className="relative px-6 py-3"><span className="sr-only">Edit/Delete</span></th>
+                {userRole === "admin" && (
+                  <th className="relative px-6 py-3"><span className="sr-only">Edit/Delete</span></th>
+                )}
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -75,20 +91,22 @@ const MembersScreen = ({
                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
   {member.address || "—"}
 </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-3">
-                      <button
-                        onClick={() => openEditMemberModal(member)}
-                        className="text-blue-600 hover:text-blue-900 dark:hover:text-blue-400 mr-3"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => deleteMember(member?.id ?? key)}
-                        className="text-red-600 hover:text-red-900 dark:hover:text-red-400"
-                      >
-                        Delete
-                      </button>
-                    </td>
+                    {userRole === "admin" && (
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-3">
+                        <button
+                          onClick={() => openEditMemberModal(member)}
+                          className="text-blue-600 hover:text-blue-900 dark:hover:text-blue-400 mr-3"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteMember(member?.id ?? key)}
+                          className="text-red-600 hover:text-red-900 dark:hover:text-red-400"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

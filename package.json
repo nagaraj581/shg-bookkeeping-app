@@ -24,7 +24,7 @@
   "scripts": {
     "tw-init": "tailwindcss init -p",
     "start": "react-scripts start",
-    "build": "react-scripts build || echo 'Build completed with warnings'",
+    "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "auto": "git add . && git commit -m \"upd\" && git push",

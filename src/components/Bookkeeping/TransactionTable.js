@@ -1,15 +1,13 @@
 // src/components/Bookkeeping/TransactionTable.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  collection,
   deleteDoc,
   doc,
-  onSnapshot,
-  orderBy,
-  query,
+  getDoc,
+  serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
-import { db, auth } from "../../firebase";
+import { db } from "../../firebase";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 import EditModal from "./EditModal";
@@ -21,11 +19,17 @@ const formatINR = (num) => {
   return n.toLocaleString("en-IN");
 };
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
-const TransactionTable = ({ members, shgId, projectId }) => {
-  const [transactions, setTransactions] = useState([]);
-  const [filtered, setFiltered] = useState([]);
-  const [loading, setLoading] = useState(true);
+const TransactionTable = ({
+  members,
+  loans = [],
+  transactions = [],
+  shgId,
+  projectId,
+  userId,
+  userRole = "admin",
+}) => {
   const [selectedIds, setSelectedIds] = useState([]);
   const [memberFilter, setMemberFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -36,6 +40,8 @@ const TransactionTable = ({ members, shgId, projectId }) => {
   const [confirmAction, setConfirmAction] = useState(null);
   const [filterMonth, setFilterMonth] = useState("");
   const [filterYear, setFilterYear] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const tableRef = useRef();
 
@@ -50,43 +56,7 @@ const TransactionTable = ({ members, shgId, projectId }) => {
     }
   };
 
-  // Load transactions from Firestore
-  useEffect(() => {
-    if (!auth.currentUser || !projectId || !shgId) return;
-
-    const txCol = collection(
-      db,
-      "artifacts",
-      projectId,
-      "users",
-      auth.currentUser.uid,
-      "shg_groups",
-      shgId,
-      "transactions"
-    );
-    const q = query(txCol, orderBy("date", "desc"));
-
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const list = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() });
-        });
-        setTransactions(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("transactions onSnapshot error:", err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsub();
-  }, [projectId, shgId]);
-
-  // Apply filters (month, year, etc.)
-  useEffect(() => {
+  const filtered = useMemo(() => {
     let list = [...transactions];
 
     list.sort((a, b) => {
@@ -118,8 +88,23 @@ const TransactionTable = ({ members, shgId, projectId }) => {
       list = list.filter((t) => t.date && toJsDate(t.date) && toJsDate(t.date) <= to);
     }
 
-    setFiltered(list);
+    return list;
   }, [memberFilter, typeFilter, filterMonth, filterYear, dateFrom, dateTo, transactions]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, filtered.length);
+  const paginatedRows = filtered.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [memberFilter, typeFilter, filterMonth, filterYear, dateFrom, dateTo, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const clearAllFilters = () => {
     setMemberFilter("");
@@ -138,7 +123,7 @@ const TransactionTable = ({ members, shgId, projectId }) => {
   };
 
   const selectAllOnPage = () => {
-    const ids = filtered.map((t) => t.id);
+    const ids = paginatedRows.map((t) => t.id);
     setSelectedIds(ids);
   };
 
@@ -161,7 +146,7 @@ const TransactionTable = ({ members, shgId, projectId }) => {
               "artifacts",
               projectId,
               "users",
-              auth.currentUser.uid,
+                userId,
               "shg_groups",
               shgId,
               "transactions",
@@ -178,49 +163,184 @@ const TransactionTable = ({ members, shgId, projectId }) => {
     });
   };
 
-  const handleDelete = (id) => {
-    setAlertMessage("Delete this transaction? This cannot be undone.");
-    setConfirmAction(() => async () => {
-      try {
-        await deleteDoc(
-          doc(
-            db,
-            "artifacts",
-            projectId,
-            "users",
-            auth.currentUser.uid,
-            "shg_groups",
-            shgId,
-            "transactions",
-            id
-          )
-        );
-      } catch (err) {
-        console.error("Delete error:", err);
-        setAlertMessage("Failed to delete transaction.");
-      }
-    });
-  };
+  const handleDelete = (tx) => {
+  setAlertMessage("Delete this transaction? This cannot be undone.");
 
-  const handleSaveEdit = async (updates) => {
+  setConfirmAction(() => async () => {
     try {
       const txRef = doc(
         db,
         "artifacts",
         projectId,
         "users",
-        auth.currentUser.uid,
+        userId,
+        "shg_groups",
+        shgId,
+        "transactions",
+        tx.id
+      );
+
+      // Reverse this repayment from the loan before deleting the transaction.
+      if (tx.type === "Loan Repayment" && tx.loanId) {
+        const loanRef = doc(
+          db,
+          "artifacts",
+          projectId,
+          "users",
+          userId,
+          "shg_groups",
+          shgId,
+          "loans",
+          tx.loanId
+        );
+
+        const loanSnap = await getDoc(loanRef);
+
+        if (loanSnap.exists()) {
+          const loan = loanSnap.data();
+
+          const principal = Number(tx.principalRepaid || 0);
+          const interest = Number(tx.interestRepaid || 0);
+
+          const oldOutstanding = Number(loan.outstandingAmount || 0);
+          const oldTotalRepaid = Number(loan.totalRepaid || 0);
+
+          const newOutstanding = oldOutstanding + principal;
+          const newTotalRepaid = Math.max(
+            0,
+            oldTotalRepaid - (principal + interest)
+          );
+          const newStatus = newOutstanding > 0 ? "active" : "closed";
+
+          await updateDoc(loanRef, {
+            outstandingAmount: newOutstanding,
+            totalRepaid: newTotalRepaid,
+            status: newStatus,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      // ✅ Now delete transaction
+      await deleteDoc(txRef);
+    } catch (err) {
+      console.error("Delete error:", err);
+      setAlertMessage("Failed to delete transaction.");
+    }
+  });
+};
+
+  const handleSaveEditWithLoanMove = async (updates) => {
+    try {
+      const txRef = doc(
+        db,
+        "artifacts",
+        projectId,
+        "users",
+        userId,
         "shg_groups",
         shgId,
         "transactions",
         editing.id
       );
+
+      if (updates.type === "Loan Repayment") {
+        const oldLoanId = editing.loanId || null;
+        const newLoanId = updates.loanId || editing.loanId || null;
+        const oldPrincipal = parseFloat(editing.principalRepaid || 0);
+        const oldInterest = parseFloat(editing.interestRepaid || 0);
+        const newPrincipal = parseFloat(updates.principalRepaid || 0);
+        const newInterest = parseFloat(updates.interestRepaid || 0);
+
+        updates.amount = newPrincipal + newInterest;
+
+        const applyLoanDelta = async (loanId, principalDelta, interestDelta) => {
+          if (!loanId) return;
+
+          const loanRef = doc(
+            db,
+            "artifacts",
+            projectId,
+            "users",
+            userId,
+            "shg_groups",
+            shgId,
+            "loans",
+            loanId
+          );
+
+          const loanSnap = await getDoc(loanRef);
+          if (!loanSnap.exists()) {
+            throw new Error(`Loan not found for ID ${loanId}`);
+          }
+
+          const loan = loanSnap.data();
+          let nextOutstanding =
+            Number(loan.outstandingAmount || 0) - Number(principalDelta || 0);
+          let nextTotalRepaid =
+            Number(loan.totalRepaid || 0) +
+            Number(principalDelta || 0) +
+            Number(interestDelta || 0);
+
+          if (nextOutstanding < 0) nextOutstanding = 0;
+          if (nextTotalRepaid < 0) nextTotalRepaid = 0;
+
+          const nextStatus = nextOutstanding <= 0 ? "closed" : "active";
+
+          await updateDoc(loanRef, {
+            outstandingAmount: nextOutstanding,
+            totalRepaid: nextTotalRepaid,
+            status: nextStatus,
+            updatedAt: serverTimestamp(),
+          });
+        };
+
+        if (oldLoanId) {
+          await applyLoanDelta(oldLoanId, -oldPrincipal, -oldInterest);
+        }
+
+        if (newLoanId) {
+          await applyLoanDelta(newLoanId, newPrincipal, newInterest);
+        }
+      }
+
       await updateDoc(txRef, updates);
       setEditing(null);
     } catch (err) {
       console.error("Update transaction error:", err);
       setAlertMessage("Failed to update transaction.");
     }
+  };
+
+  const getDisplayLoanId = (tx) => {
+    if (tx.loanId) return tx.loanId;
+    if (tx.type !== "Loan Disbursed") return "";
+
+    const txDate = (() => {
+      const d = toJsDate(tx.date);
+      if (!d || Number.isNaN(d.getTime())) return "";
+      return d.toISOString().slice(0, 10);
+    })();
+
+    const matches = loans.filter((loan) => {
+      const loanDate = (() => {
+        const d = toJsDate(loan.date);
+        if (!d || Number.isNaN(d.getTime())) {
+          return typeof loan.date === "string" ? loan.date.slice(0, 10) : "";
+        }
+        return d.toISOString().slice(0, 10);
+      })();
+
+      return (
+        loan.memberId === tx.memberId &&
+        String(loan.loanType || "").trim().toLowerCase() ===
+          String(tx.loanType || "").trim().toLowerCase() &&
+        Number(loan.principalAmount || 0) === Number(tx.amount || 0) &&
+        loanDate === txDate
+      );
+    });
+
+    return matches.length === 1 ? matches[0].id : "";
   };
 
   const exportToXlsx = (onlyRepayments = false) => {
@@ -234,6 +354,7 @@ const TransactionTable = ({ members, shgId, projectId }) => {
         PrincipalRepaid: t.principalRepaid ?? "",
         InterestRepaid: t.interestRepaid ?? "",
         LoanType: t.loanType ?? "",
+        LoanId: getDisplayLoanId(t),
         Description: t.description ?? "",
       }));
 
@@ -246,28 +367,17 @@ const TransactionTable = ({ members, shgId, projectId }) => {
     XLSX.writeFile(wb, fname);
   };
 
-  const columns = useMemo(
-    () => [
-      { header: "Date", accessor: "date" },
-      { header: "Type", accessor: "type" },
-      { header: "Member", accessor: "memberId" },
-      { header: "Amount", accessor: "amount" },
-      { header: "Loan Type", accessor: "loanType" },
-      { header: "Principal Repaid", accessor: "principalRepaid" },
-      { header: "Interest Repaid", accessor: "interestRepaid" },
-      { header: "Description", accessor: "description" },
-    ],
-    []
-  );
-
-  if (loading) return <div>Loading transactions...</div>;
-
   return (
     <div ref={tableRef} className="mt-6">
       {/* ✅ Summary Counters */}
       <div className="flex justify-between items-center mb-2 text-sm text-gray-700">
         <span>
 Total transactions: <strong>{formatINR(filtered.length)}</strong>
+          {filtered.length > 0 && (
+            <span className="ml-2 text-gray-500">
+              Showing {formatINR(pageStart + 1)}-{formatINR(pageEnd)}
+            </span>
+          )}
         </span>
         {selectedIds.length > 0 && (
           <span className="text-blue-600 font-semibold">
@@ -305,6 +415,7 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
           <option value="General Saving">General Saving</option>
           <option value="Expense">Expense</option>
           <option value="Fine">Fine</option>
+          <option value="Account Transfer">Account Transfer</option>
         </select>
 
         {/* Month + Year */}
@@ -345,24 +456,28 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
         >
           Clear Filters
         </button>
-        <button
-          onClick={selectAllOnPage}
-          className="px-3 py-1 bg-gray-200 rounded"
-        >
-          Select All
-        </button>
-        <button
-          onClick={clearSelection}
-          className="px-3 py-1 bg-gray-200 rounded"
-        >
-          Clear Selection
-        </button>
-        <button
-          onClick={handleBulkDelete}
-          className="px-3 py-1 bg-red-500 text-white rounded"
-        >
-          Delete Selected
-        </button>
+        {userRole === "admin" && (
+          <>
+            <button
+              onClick={selectAllOnPage}
+              className="px-3 py-1 bg-gray-200 rounded"
+            >
+              Select Page
+            </button>
+            <button
+              onClick={clearSelection}
+              className="px-3 py-1 bg-gray-200 rounded"
+            >
+              Clear Selection
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              className="px-3 py-1 bg-red-500 text-white rounded"
+            >
+              Delete Selected
+            </button>
+          </>
+        )}
       </div>
 
       {/* Totals */}
@@ -425,7 +540,7 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
   <table className="w-full border-collapse text-xs sm:text-sm">
 <thead>
   <tr>
-    <th className="border p-2"></th>
+    {userRole === "admin" && <th className="border p-2"></th>}
     <th className="border p-2">Date</th>
     <th className="border p-2">Type</th>
     <th className="border p-2">Member</th>
@@ -433,15 +548,17 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
 
     {/* Hidden on small screens */}
     <th className="border p-2 hidden md:table-cell">Loan Type</th>
+    <th className="border p-2 hidden xl:table-cell">Loan ID</th>
     <th className="border p-2 hidden lg:table-cell">Principal Repaid</th>
     <th className="border p-2 hidden lg:table-cell">Interest Repaid</th>
     <th className="border p-2 hidden md:table-cell">Description</th>
 
-    <th className="border p-2">Actions</th>
+    {userRole === "admin" && <th className="border p-2">Actions</th>}
   </tr>
 </thead>
           <tbody>
-            {filtered.map((t) => {
+            {paginatedRows.length > 0 ? (
+            paginatedRows.map((t) => {
               let rowClass = "";
               if (
                 t.type === "Loan Disbursed" &&
@@ -464,13 +581,15 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
 
               return (
                 <tr key={t.id} className={rowClass}>
-                  <td className="border p-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(t.id)}
-                      onChange={() => toggleSelect(t.id)}
-                    />
-                  </td>
+                  {userRole === "admin" && (
+                    <td className="border p-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(t.id)}
+                        onChange={() => toggleSelect(t.id)}
+                      />
+                    </td>
+                  )}
                   <td className="border p-2">
                     {t.date && toJsDate(t.date)
                       ? format(toJsDate(t.date), "dd-MM-yyyy")
@@ -483,30 +602,80 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
                   </td>
                   <td className="border p-2 text-right">{t.amount}</td>
                   <td className="border p-2 hidden md:table-cell">{t.loanType || ""}</td>
+                  <td className="border p-2 hidden xl:table-cell font-mono text-[11px]">{getDisplayLoanId(t)}</td>
                   <td className="border p-2 hidden lg:table-cell">{t.principalRepaid || ""}</td>
                    <td className="border p-2 hidden lg:table-cell">{t.interestRepaid || ""}</td>
                   <td className="border p-2 hidden md:table-cell">{t.description || ""}</td>
-                  <td className="border p-2">
-                    <button
-                      onClick={() => setEditing(t)}
-                      className="px-2 py-1 text-xs sm:text-sm bg-yellow-500 text-white rounded mr-2"
-
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(t.id)}
-                      className="px-2 py-1 text-xs sm:text-sm bg-red-500 text-white rounded"
-
-                    >
-                      Delete
-                    </button>
-                  </td>
+                  {userRole === "admin" && (
+                    <td className="border p-2">
+                      <button
+                        onClick={() => setEditing(t)}
+                        className="px-2 py-1 text-xs sm:text-sm bg-yellow-500 text-white rounded mr-2"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(t)}
+                        className="px-2 py-1 text-xs sm:text-sm bg-red-500 text-white rounded"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
-            })}
+            })
+            ) : (
+              <tr>
+                <td
+                  colSpan={userRole === "admin" ? 11 : 10}
+                  className="border p-6 text-center text-gray-500"
+                >
+                  No transactions found.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">Rows per page</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="rounded border p-2"
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            disabled={currentPage <= 1}
+            className="rounded border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="font-medium text-gray-700">
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            disabled={currentPage >= totalPages}
+            className="rounded border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       </div>
 
       {/* Export buttons */}
@@ -525,11 +694,11 @@ Total transactions: <strong>{formatINR(filtered.length)}</strong>
         </button>
       </div>
 
-      {editing && (
+      {userRole === "admin" && editing && (
         <EditModal
           transaction={editing}
           onClose={() => setEditing(null)}
-          onSave={handleSaveEdit}
+          onSave={handleSaveEditWithLoanMove}
           members={members}
         />
       )}

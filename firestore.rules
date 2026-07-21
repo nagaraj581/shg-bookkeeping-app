@@ -1,0 +1,82 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdminUid(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function memberAccessDoc(projectId, userId) {
+      return /databases/$(database)/documents/artifacts/$(projectId)/users/$(userId)/member_access/$(request.auth.token.email);
+    }
+
+    function hasMemberAccess(projectId, userId, shgId) {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && exists(memberAccessDoc(projectId, userId))
+        && get(memberAccessDoc(projectId, userId)).data.shgId == shgId;
+    }
+
+    function isOwnMemberDoc(projectId, userId, shgId, memberId) {
+      return hasMemberAccess(projectId, userId, shgId)
+        && get(memberAccessDoc(projectId, userId)).data.memberId == memberId;
+    }
+
+    match /artifacts/{projectId}/users/{userId} {
+      allow read, write: if isAdminUid(userId);
+
+      match /member_access/{memberEmail} {
+        allow read: if isSignedIn() && request.auth.token.email == memberEmail;
+        allow write: if isAdminUid(userId);
+      }
+
+      match /shg_groups/{shgId} {
+        allow read: if isAdminUid(userId) || hasMemberAccess(projectId, userId, shgId);
+        allow write: if isAdminUid(userId);
+
+        match /members/{memberId} {
+          allow read: if isAdminUid(userId) || isOwnMemberDoc(projectId, userId, shgId, memberId);
+          allow write: if isAdminUid(userId);
+        }
+
+        match /transactions/{transactionId} {
+          allow read: if isAdminUid(userId)
+            || (
+              hasMemberAccess(projectId, userId, shgId)
+              && resource.data.memberId == get(memberAccessDoc(projectId, userId)).data.memberId
+            );
+          allow write: if isAdminUid(userId);
+        }
+
+        match /loans/{loanId} {
+          allow read: if isAdminUid(userId)
+            || (
+              hasMemberAccess(projectId, userId, shgId)
+              && resource.data.memberId == get(memberAccessDoc(projectId, userId)).data.memberId
+            );
+          allow write: if isAdminUid(userId);
+        }
+
+        match /meetings/{meetingId} {
+          allow read, write: if isAdminUid(userId);
+        }
+
+        match /{document=**} {
+          allow read, write: if isAdminUid(userId);
+        }
+      }
+
+      match /{document=**} {
+        allow read, write: if isAdminUid(userId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
