@@ -727,8 +727,8 @@ y += 10;    }
   }, [loanFilter, outstandingLoans]);
 
   const monthlyCollection = useMemo(() => {
-    return generateMonthlyCollection(members, loans);
-  }, [members, loans]);
+    return generateMonthlyCollection(members, loans, transactions, selectedMonth);
+  }, [members, loans, transactions, selectedMonth]);
 
   useEffect(() => {
     setMonthlyRows(monthlyCollection);
